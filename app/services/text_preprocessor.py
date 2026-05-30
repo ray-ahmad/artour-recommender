@@ -52,7 +52,7 @@ class TextPreprocessor:
         df["clean_text"] = clean_text.map(
             lambda text: " ".join(
                 stemmed
-                for stemmed in (self._stem_word(word) for word in text.split())
+                for stemmed in (self._stem_word(word) for word in str(text).split())
                 if stemmed
             )
         )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Mapping, cast
 
 
 class MCRSService:
@@ -45,5 +45,5 @@ class MCRSService:
             final_score = (self.weight_cost * cost_score) + (self.weight_benefit * benefit_score)
             scored_candidates.append({"place_id": str(place_id), "score": float(final_score)})
 
-        scored_candidates.sort(key=lambda item: item["score"], reverse=True)
+        scored_candidates.sort(key=lambda item: float(cast(float, item.get("score", 0.0))), reverse=True)
         return scored_candidates[:limit]

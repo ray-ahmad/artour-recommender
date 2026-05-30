@@ -9,8 +9,8 @@ from app.api.schemas.recommendation import (
     RecommendationItemResponse,
     UserToItemEnvelope,
     UserToItemRecommendationResponse,
-    UserToItemRequest,
 )
+from app.api.schemas.models import UserToItemRequest
 from app.services.recommendation_service import RecommendationService
 
 router = APIRouter(tags=["recommendations"])
@@ -19,10 +19,10 @@ router = APIRouter(tags=["recommendations"])
 def _build_response_items(items: list[dict[str, object]]) -> list[RecommendationItemResponse]:
     return [
         RecommendationItemResponse(
-            place_id=str(item["place_id"]),
-            score=float(item["score"]),
-            rank=int(item["rank"]),
-            source=str(item["source"]),
+            place_id=str(item.get("place_id", "")),
+            score=float(item.get("score", 0.0)),
+            rank=int(item.get("rank", 0)),
+            source=str(item.get("source", "unknown")),
         )
         for item in items
     ]

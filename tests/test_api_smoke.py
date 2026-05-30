@@ -101,10 +101,10 @@ def test_api_smoke_recommendations() -> None:
             json={"basket_ids": ["p1", "p2"], "k": 2},
         )
         assert user_response.status_code == 200
-        assert user_response.json()["mode"] == "user-to-item"
-        assert len(user_response.json()["recommendations"]) == 2
+        assert user_response.json()["data"]["mode"] == "user-to-item"
+        assert len(user_response.json()["data"]["recommendations"]) == 2
 
         item_response = client.get("/recommend/item-to-item/p1", params={"k": 2})
         assert item_response.status_code == 200
-        assert item_response.json()["mode"] == "item-to-item"
-        assert len(item_response.json()["recommendations"]) == 2
+        assert item_response.json()["data"]["mode"] == "item-to-item"
+        assert len(item_response.json()["data"]["recommendations"]) == 2

@@ -11,6 +11,7 @@ from app.services.apriori_service import AprioriService
 from app.services.cbf_service import CBFService
 from app.services.mcrs_service import MCRSService
 from app.services.text_preprocessor import TextPreprocessor
+from typing import cast
 
 
 class RecommendationService:
@@ -181,11 +182,12 @@ class RecommendationService:
         ranked = self.mcrs_service.rank(candidate_pool, self._place_lookup, self._min_price, self._max_price, k)
         results: list[dict[str, object]] = []
         for index, item in enumerate(ranked, start=1):
-            place_id = str(item["place_id"])
+            place_id = str(item.get("place_id", ""))
+            score_val = float(cast(float, item.get("score", 0.0)))
             results.append(
                 {
                     "place_id": place_id,
-                    "score": float(item["score"]),
+                    "score": score_val,
                     "rank": index,
                     "source": source_map.get(place_id, "unknown"),
                 }

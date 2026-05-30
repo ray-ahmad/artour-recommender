@@ -7,7 +7,8 @@ import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from scipy.sparse import issparse
+from scipy.sparse import issparse, csr_matrix
+from typing import cast
 
 
 class CBFService:
@@ -67,7 +68,35 @@ class CBFService:
         if not basket_indices:
             return []
 
-        centroid_vector = self.tfidf_matrix[basket_indices].mean(axis=0)
+        if self.tfidf_matrix is None:
+            return []
+
+        # Safely slice sparse matrix and convert subset to dense
+        # Build dense rows by fetching each row to avoid advanced indexing on sparse matrices
+        dense_rows = []
+        for idx in basket_indices:
+            try:
+                row = self.tfidf_matrix.getrow(int(idx))
+            except Exception:
+                # Convert to CSR then fetch row to avoid advanced indexing on generic spmatrix
+                tocsr = getattr(self.tfidf_matrix, "tocsr", None)
+                if callable(tocsr):
+                    csr = cast(csr_matrix, tocsr())
+                    row = csr.getrow(int(idx))
+                else:
+                    # Last-resort: attempt getrow again (some implementations provide it)
+                    row = self.tfidf_matrix.getrow(int(idx))
+
+            if hasattr(row, "toarray"):
+                dense_rows.append(row.toarray().ravel())
+            else:
+                dense_rows.append(np.asarray(row).ravel())
+
+        if not dense_rows:
+            return []
+
+        dense_subset = np.vstack(dense_rows)
+        centroid_vector = np.atleast_2d(dense_subset.mean(axis=0).astype(float))
         return self._rank_similar(centroid_vector, exclude_set | {str(place_id) for place_id in basket_ids}, needed, "cbf_centroid")
 
     def recommend_by_anchor(self, anchor_id: str, exclude_ids: Iterable[str] | None = None, needed: int = 10) -> list[dict[str, object]]:
@@ -76,5 +105,22 @@ class CBFService:
         if anchor_index is None:
             return []
 
-        anchor_vector = self.tfidf_matrix[anchor_index]
+        if self.tfidf_matrix is None:
+            return []
+
+        try:
+            row = self.tfidf_matrix.getrow(int(anchor_index))
+        except Exception:
+            tocsr = getattr(self.tfidf_matrix, "tocsr", None)
+            if callable(tocsr):
+                csr = cast(csr_matrix, tocsr())
+                row = csr.getrow(int(anchor_index))
+            else:
+                row = self.tfidf_matrix.getrow(int(anchor_index))
+
+        if hasattr(row, "toarray"):
+            anchor_vector = np.atleast_2d(row.toarray().astype(float))
+        else:
+            anchor_vector = np.atleast_2d(np.asarray(row).astype(float))
+
         return self._rank_similar(anchor_vector, exclude_set | {str(anchor_id)}, needed, "cbf_anchor")
