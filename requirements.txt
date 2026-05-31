@@ -9,3 +9,4 @@ httpx
 pydantic
 pytest
 httpx2
+python-dotenv

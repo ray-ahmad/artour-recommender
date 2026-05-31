@@ -1,8 +1,11 @@
-import pandas as pd
 import asyncio
+import os
+
+import pandas as pd
 from fastapi.testclient import TestClient
 
 from app.configs.settings import Settings
+from app.configs.settings import get_settings
 from app.main import create_app
 from app.repositories.artour_repository import DataBundle
 from app.services.recommendation_service import RecommendationService
@@ -87,24 +90,77 @@ def build_service() -> RecommendationService:
     return service
 
 
+class FakeWebhookClient:
+    def __init__(self) -> None:
+        self.payloads = []
+
+    async def send(self, payload) -> None:
+        self.payloads.append(payload)
+
+
+class FakeRefreshService:
+    def __init__(self) -> None:
+        self.refreshed = False
+        self.places_count = 4
+        self.interactions_count = 4
+
+    async def refresh(self) -> None:
+        self.refreshed = True
+
+
 def test_api_smoke_recommendations() -> None:
+    get_settings.cache_clear()
     app = create_app()
     app.state.recommendation_service = build_service()
+    app.state.refresh_webhook_client = FakeWebhookClient()
 
     with TestClient(app) as client:
         health_response = client.get("/health")
         assert health_response.status_code == 200
         assert health_response.json()["ready"] is True
 
+        empty_user_response = client.post(
+            "/recommend/user-to-item",
+            json={"basketIds": [], "k": 2},
+        )
+        assert empty_user_response.status_code == 200
+        assert empty_user_response.json()["data"]["basketIds"] == []
+        assert empty_user_response.json()["data"]["recommendations"] == []
+
         user_response = client.post(
             "/recommend/user-to-item",
-            json={"basket_ids": ["p1", "p2"], "k": 2},
+            json={"basketIds": ["p1", "p2"], "k": 2},
         )
         assert user_response.status_code == 200
         assert user_response.json()["data"]["mode"] == "user-to-item"
+        assert user_response.json()["data"]["basketIds"] == ["p1", "p2"]
         assert len(user_response.json()["data"]["recommendations"]) == 2
 
         item_response = client.get("/recommend/item-to-item/p1", params={"k": 2})
         assert item_response.status_code == 200
         assert item_response.json()["data"]["mode"] == "item-to-item"
+        assert item_response.json()["data"]["anchorId"] == "p1"
         assert len(item_response.json()["data"]["recommendations"]) == 2
+
+
+def test_api_refresh_returns_accepted_and_delivers_webhook() -> None:
+    os.environ["ARTOUR_REFRESH_TRIGGER_TOKEN"] = "test-refresh-trigger-token"
+    get_settings.cache_clear()
+    app = create_app()
+    fake_service = FakeRefreshService()
+    fake_webhook_client = FakeWebhookClient()
+    app.state.recommendation_service = fake_service
+    app.state.refresh_webhook_client = fake_webhook_client
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/refresh",
+            headers={"X-ARTOUR-REFRESH-TRIGGER-TOKEN": "test-refresh-trigger-token"},
+        )
+
+    assert response.status_code == 202
+    assert response.json()["data"]["status"] == "accepted"
+    assert response.json()["data"]["refreshId"]
+    assert fake_service.refreshed is True
+    assert len(fake_webhook_client.payloads) == 1
+    assert fake_webhook_client.payloads[0].status == "success"
