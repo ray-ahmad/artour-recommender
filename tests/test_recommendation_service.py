@@ -107,6 +107,19 @@ def test_user_to_item_uses_centroid_padding_when_apriori_is_empty() -> None:
     assert all(item["place_id"] not in {"p1", "p2"} for item in recommendations)
 
 
+def test_user_to_item_returns_empty_list_for_empty_basket() -> None:
+    settings = Settings(
+        backend_base_url="http://localhost:8001",
+        default_recommendation_k=2,
+        default_candidate_overgenerate_n=2,
+    )
+    service = RecommendationService(repository=FakeRepository(build_bundle()), settings=settings)
+
+    recommendations = service.recommend_user_to_item([])
+
+    assert recommendations == []
+
+
 def test_item_to_item_uses_anchor_padding_when_apriori_is_empty() -> None:
     service = build_service()
     recommendations = service.recommend_item_to_item("p1", k=2)

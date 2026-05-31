@@ -43,3 +43,6 @@ Thumbs.db
 # Local runtime artifacts
 *.sqlite3
 *.db
+
+# Caches
+.cache

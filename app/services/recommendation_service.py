@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
+import os
+import pickle
+import time
+from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
@@ -18,6 +23,11 @@ class RecommendationService:
     def __init__(self, repository: ArtourRepository, settings: Settings | None = None) -> None:
         self.repository = repository
         self.settings = settings or get_settings()
+        self.logger = logging.getLogger("uvicorn.error")
+        self.state_filepath = os.getenv(
+            "ARTOUR_RECOMMENDATION_STATE_PATH",
+            str(Path(__file__).resolve().parents[2] / ".cache" / "recommendation_state.pkl"),
+        )
         self.text_preprocessor = TextPreprocessor()
         self.cbf_service = CBFService()
         self.apriori_service = AprioriService()
@@ -127,11 +137,89 @@ class RecommendationService:
             existing_parts.append(new_source)
         return "+".join(existing_parts)
 
-    async def refresh(self, bundle: DataBundle | None = None) -> DataBundle:
+    def save_state(self, filepath: str) -> None:
+        self.logger.info("Saving recommendation state: path=%s", filepath)
+        state_path = Path(filepath)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+
+        state = {
+            "places_df": self._places_df,
+            "interactions_df": self._interactions_df,
+            "place_lookup": self._place_lookup,
+            "min_price": self._min_price,
+            "max_price": self._max_price,
+            "cbf_state": {
+                "vectorizer": self.cbf_service.vectorizer,
+                "tfidf_matrix": self.cbf_service.tfidf_matrix,
+                "place_id_to_idx": self.cbf_service.place_id_to_idx,
+                "idx_to_place_id": self.cbf_service.idx_to_place_id,
+            },
+            "apriori_state": {
+                "rules": self.apriori_service.rules,
+                "relative_support": self.apriori_service.relative_support,
+            },
+            "text_preprocessor_state": {
+                "memoized_stems": getattr(self.text_preprocessor, "_memoized_stems", {}),
+            },
+        }
+
+        temp_path = state_path.with_suffix(f"{state_path.suffix}.tmp")
+        with temp_path.open("wb") as file_handle:
+            pickle.dump(state, file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+        temp_path.replace(state_path)
+
+    def load_state(self, filepath: str) -> None:
+        self.logger.info("Loading recommendation state: path=%s", filepath)
+        state_path = Path(filepath)
+        if not state_path.exists():
+            raise FileNotFoundError(str(state_path))
+
+        with state_path.open("rb") as file_handle:
+            state = pickle.load(file_handle)
+
+        self._places_df = state.get("places_df", pd.DataFrame())
+        self._interactions_df = state.get("interactions_df", pd.DataFrame())
+        self._place_lookup = dict(state.get("place_lookup", {}))
+        self._min_price = float(state.get("min_price", 0.0))
+        self._max_price = float(state.get("max_price", 0.0))
+
+        cbf_state = state.get("cbf_state", {})
+        self.cbf_service.vectorizer = cbf_state.get("vectorizer")
+        self.cbf_service.tfidf_matrix = cbf_state.get("tfidf_matrix")
+        self.cbf_service.place_id_to_idx = dict(cbf_state.get("place_id_to_idx", {}))
+        self.cbf_service.idx_to_place_id = dict(cbf_state.get("idx_to_place_id", {}))
+
+        apriori_state = state.get("apriori_state", {})
+        self.apriori_service.rules = apriori_state.get("rules", pd.DataFrame())
+        self.apriori_service.relative_support = float(apriori_state.get("relative_support", 0.0))
+
+        self.text_preprocessor = TextPreprocessor()
+        self.text_preprocessor._memoized_stems = dict(state.get("text_preprocessor_state", {}).get("memoized_stems", {}))
+        self._ready = True
+        self.logger.info("Recommendation state loaded: places=%s interactions=%s", self.places_count, self.interactions_count)
+
+    async def refresh(
+        self,
+        bundle: DataBundle | None = None,
+    ) -> DataBundle:
+        refresh_started = time.perf_counter()
+        self.logger.info("Recommendation refresh started")
         bundle = bundle or await self.repository.refresh()
+
+        preprocess_started = time.perf_counter()
         places_df = self.text_preprocessor.preprocess_places(bundle.places)
+        self.logger.info(
+            "Sastrawi/text preprocessing finished: places=%s memoizedStems=%s durationMs=%.2f",
+            int(places_df.shape[0]),
+            len(getattr(self.text_preprocessor, "_memoized_stems", {})),
+            (time.perf_counter() - preprocess_started) * 1000,
+        )
+
         if "placeId" not in places_df.columns:
-            raise ValueError("Places payload must include placeId.")
+            if "id" in places_df.columns:
+                places_df["placeId"] = places_df["id"].fillna("").astype(str)
+            else:
+                raise ValueError("Places payload must include placeId.")
 
         places_df = places_df.copy()
         places_df["placeId"] = places_df["placeId"].fillna("").astype(str)
@@ -142,7 +230,15 @@ class RecommendationService:
                 places_df[column] = 0.0
 
         known_place_ids = set(places_df["placeId"].tolist())
+
+        interaction_clean_started = time.perf_counter()
         interactions_df = self._clean_interactions(bundle.interactions, known_place_ids)
+        self.logger.info(
+            "Interactions cleaning finished: raw=%s cleaned=%s durationMs=%.2f",
+            int(bundle.interactions.shape[0]),
+            int(interactions_df.shape[0]),
+            (time.perf_counter() - interaction_clean_started) * 1000,
+        )
 
         self._places_df = places_df
         self._interactions_df = interactions_df
@@ -150,13 +246,40 @@ class RecommendationService:
         self._min_price = float(places_df["placePrice"].min()) if not places_df.empty else 0.0
         self._max_price = float(places_df["placePrice"].max()) if not places_df.empty else 0.0
 
+        cbf_fit_started = time.perf_counter()
         self.cbf_service.fit(places_df)
+        self.logger.info(
+            "CBF fit finished: places=%s durationMs=%.2f",
+            int(places_df.shape[0]),
+            (time.perf_counter() - cbf_fit_started) * 1000,
+        )
+
+        apriori_fit_started = time.perf_counter()
         self.apriori_service.fit(
             interactions_df,
             absolute_support=self.settings.apriori_absolute_support,
             max_len=self.settings.apriori_max_len,
         )
+        self.logger.info(
+            "Apriori fit finished: interactions=%s rules=%s support=%.6f durationMs=%.2f",
+            int(interactions_df.shape[0]),
+            int(self.apriori_service.rules.shape[0]) if hasattr(self.apriori_service.rules, "shape") else 0,
+            float(self.apriori_service.relative_support),
+            (time.perf_counter() - apriori_fit_started) * 1000,
+        )
+
         self._ready = True
+
+        save_state_started = time.perf_counter()
+        self.save_state(self.state_filepath)
+        self.logger.info("State save finished: path=%s durationMs=%.2f", self.state_filepath, (time.perf_counter() - save_state_started) * 1000)
+
+        self.logger.info(
+            "Recommendation refresh finished: places=%s interactions=%s durationMs=%.2f",
+            self.places_count,
+            self.interactions_count,
+            (time.perf_counter() - refresh_started) * 1000,
+        )
         return bundle
 
     def _ensure_ready(self) -> None:
@@ -231,7 +354,11 @@ class RecommendationService:
         return cascaded_candidates[:target_n], source_map
 
     def recommend_user_to_item(self, basket_ids: Iterable[str], k: int | None = None) -> list[dict[str, object]]:
-        basket = self._validate_request_ids(basket_ids)
+        basket = [str(item).strip() for item in basket_ids if str(item).strip()]
+        if not basket:
+            return []
+
+        basket = self._validate_request_ids(basket)
         k = int(k or self.settings.default_recommendation_k)
         target_n = self._resolve_target_n(k)
         basket_set = set(basket)

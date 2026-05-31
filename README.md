@@ -26,6 +26,8 @@ The payload is converted directly into in-memory pandas DataFrames. No CSV file 
 
 On startup, the app attempts an automatic refresh. If the backend is unavailable, the service stays up but returns a non-ready health state until `/refresh` succeeds.
 
+The `/refresh` endpoint accepts an optional `refreshId`, responds with `202 Accepted`, and completes the refresh in the background before sending a webhook callback to NestJS. If `ARTOUR_REFRESH_TRIGGER_TOKEN` is set, the request must include `X-ARTOUR-REFRESH-TRIGGER-TOKEN`.
+
 ## Run
 
 ```bash
@@ -38,6 +40,10 @@ uvicorn app.main:app --reload
 - `ARTOUR_PLACES_PATH`
 - `ARTOUR_USER_INTERACTIONS_PATH`
 - `ARTOUR_REQUEST_TIMEOUT_SECONDS`
+- `ARTOUR_REFRESH_WEBHOOK_URL`
+- `ARTOUR_REFRESH_TRIGGER_TOKEN`
+- `ARTOUR_REFRESH_WEBHOOK_TOKEN`
+- `ARTOUR_REFRESH_WEBHOOK_TIMEOUT_SECONDS`
 - `ARTOUR_APRIORI_ABSOLUTE_SUPPORT`
 - `ARTOUR_APRIORI_MAX_LEN`
 - `ARTOUR_DEFAULT_K`
@@ -52,7 +58,7 @@ uvicorn app.main:app --reload
 ```bash
 curl -X POST http://localhost:8000/recommend/user-to-item \
   -H 'Content-Type: application/json' \
-  -d '{"basket_ids":["p1","p2","p3"],"k":5}'
+  -d '{"basketIds":["p1","p2","p3"],"k":5}'
 ```
 
 ### Item-to-item
