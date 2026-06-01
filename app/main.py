@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 import logging
 from http import HTTPStatus
 
@@ -15,6 +16,7 @@ from app.api.routers.recommendations import router as recommendations_router
 from app.configs.settings import get_settings
 from app.repositories.artour_repository import ArtourRepository
 from app.services.recommendation_service import RecommendationService
+from app.services.refresh_job import run_refresh_job
 from app.services.refresh_webhook_client import RefreshWebhookClient
 
 logger = logging.getLogger(__name__)
@@ -67,8 +69,12 @@ async def lifespan(app: FastAPI):
     logger.info("App logging initialized")
 
     service = app.state.recommendation_service
+    webhook_client = app.state.refresh_webhook_client
     try:
         service.load_state(service.state_filepath)
+    except FileNotFoundError:
+        logger.info("No persisted state found — triggering background refresh")
+        asyncio.create_task(run_refresh_job(service, webhook_client))
     except Exception as exc:
         logger.info("No persisted recommendation state loaded: %s", exc)
     yield

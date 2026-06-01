@@ -24,10 +24,12 @@ class RecommendationService:
         self.repository = repository
         self.settings = settings or get_settings()
         self.logger = logging.getLogger("uvicorn.error")
-        self.state_filepath = os.getenv(
-            "ARTOUR_RECOMMENDATION_STATE_PATH",
-            str(Path(__file__).resolve().parents[2] / ".cache" / "recommendation_state.pkl"),
+        _default_cache = (
+            "/tmp/recommendation_state.pkl"
+            if os.getenv("SPACE_ID")
+            else str(Path(__file__).resolve().parents[2] / ".cache" / "recommendation_state.pkl")
         )
+        self.state_filepath = os.getenv("ARTOUR_RECOMMENDATION_STATE_PATH", _default_cache)
         self.text_preprocessor = TextPreprocessor()
         self.cbf_service = CBFService()
         self.apriori_service = AprioriService()
