@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor
+import multiprocessing
 import os
 import re
 from typing import Iterable
@@ -75,6 +76,7 @@ class TextPreprocessor:
             max_workers=workers,
             initializer=_init_stemming_worker,
             initargs=(tuple(self._stopwords),),
+            mp_context=multiprocessing.get_context("forkserver"),
         ) as executor:
             for word, stemmed in executor.map(_stem_word_worker, unknown_words, chunksize=chunksize):
                 self._memoized_stems[word] = stemmed

@@ -19,37 +19,7 @@ from app.services.recommendation_service import RecommendationService
 from app.services.refresh_job import run_refresh_job
 from app.services.refresh_webhook_client import RefreshWebhookClient
 
-logger = logging.getLogger(__name__)
-
-
-def _configure_app_logging() -> None:
-    """Route app loggers to uvicorn handlers after server startup."""
-    uvicorn_error_logger = logging.getLogger("uvicorn.error")
-
-    target_loggers = [
-        __name__,
-        "app.api.routers.admin",
-        "app.services.refresh_job",
-        "app.repositories.artour_repository",
-        "app.services.recommendation_service",
-        "app.services.refresh_webhook_client",
-        "RecommendationService",
-        "ArtourRepository",
-        "RefreshWebhookClient",
-    ]
-
-    for logger_name in target_loggers:
-        app_logger = logging.getLogger(logger_name)
-        app_logger.setLevel(logging.INFO)
-
-        if uvicorn_error_logger.handlers:
-            for handler in uvicorn_error_logger.handlers:
-                if handler not in app_logger.handlers:
-                    app_logger.addHandler(handler)
-            app_logger.propagate = False
-        else:
-            # Fallback if uvicorn handlers are not ready yet.
-            app_logger.propagate = True
+logger = logging.getLogger("uvicorn.error")
 
 
 def _build_error_response(message: str, error: str, status_code: int) -> JSONResponse:
@@ -65,9 +35,6 @@ def _build_error_response(message: str, error: str, status_code: int) -> JSONRes
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _configure_app_logging()
-    logger.info("App logging initialized")
-
     service = app.state.recommendation_service
     webhook_client = app.state.refresh_webhook_client
     try:
