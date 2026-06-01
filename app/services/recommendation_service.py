@@ -259,6 +259,7 @@ class RecommendationService:
             interactions_df,
             absolute_support=self.settings.apriori_absolute_support,
             max_len=self.settings.apriori_max_len,
+            min_user_interactions=self.settings.apriori_min_user_interactions,
         )
         self.logger.info(
             "Apriori fit finished: interactions=%s rules=%s support=%.6f durationMs=%.2f",

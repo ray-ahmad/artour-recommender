@@ -11,7 +11,13 @@ class AprioriService:
         self.rules = pd.DataFrame()
         self.relative_support: float = 0.0
 
-    def fit(self, interactions_df: pd.DataFrame, absolute_support: int = 3, max_len: int = 3) -> None:
+    def fit(
+        self,
+        interactions_df: pd.DataFrame,
+        absolute_support: int = 3,
+        max_len: int = 3,
+        min_user_interactions: int = 2,
+    ) -> None:
         self.rules = pd.DataFrame()
         self.relative_support = 0.0
 
@@ -24,6 +30,16 @@ class AprioriService:
 
         valid_df = interactions_df.copy()
         valid_df = valid_df[valid_df["userId"].notna() & valid_df["refId"].notna()]
+        if valid_df.empty:
+            return
+
+        # Remove users with too few interactions so Apriori learns meaningful co-occurrence patterns.
+        interaction_counts = valid_df.groupby(valid_df["userId"].astype(str))["refId"].size()
+        eligible_users = interaction_counts[interaction_counts >= max(1, int(min_user_interactions))].index
+        if len(eligible_users) == 0:
+            return
+
+        valid_df = valid_df[valid_df["userId"].astype(str).isin(eligible_users)]
         if valid_df.empty:
             return
 
