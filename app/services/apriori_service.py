@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Iterable
 
 import pandas as pd
 from mlxtend.frequent_patterns import apriori, association_rules
+
+logger = logging.getLogger(__name__)
 
 
 class AprioriService:
@@ -62,12 +65,16 @@ class AprioriService:
         except ValueError:
             self.rules = pd.DataFrame()
 
-    def get_candidates(self, basket_ids: Iterable[str]) -> list[str]:
+    def get_candidates_with_explanations(self, basket_ids: Iterable[str]) -> list[dict[str, object]]:
+        """Ordered candidates with the winning rule's metrics, same order/tie-break as get_candidates().
+
+        Each item: {"place_id": str, "lift": float, "confidence": float, "support": float, "antecedents": list[str]}
+        """
         if self.rules.empty:
             return []
 
         basket_set = frozenset(str(item) for item in basket_ids)
-        candidate_scores: dict[str, tuple[float, float]] = {}
+        candidate_best: dict[str, dict[str, object]] = {}
 
         for _, row in self.rules.iterrows():
             antecedents = frozenset(str(item) for item in row.get("antecedents", []))
@@ -77,14 +84,35 @@ class AprioriService:
 
             lift = float(row.get("lift", 0.0))
             confidence = float(row.get("confidence", 0.0))
-            score = (lift, confidence)
+            support = float(row.get("support", 0.0))
 
             for item in consequents:
                 if item in basket_set:
                     continue
-                current_score = candidate_scores.get(item)
-                if current_score is None or score > current_score:
-                    candidate_scores[item] = score
+                current = candidate_best.get(item)
+                current_score = (current["lift"], current["confidence"]) if current is not None else None
+                if current_score is None or (lift, confidence) > current_score:
+                    candidate_best[item] = {
+                        "place_id": item,
+                        "lift": lift,
+                        "confidence": confidence,
+                        "support": support,
+                        "antecedents": sorted(antecedents),
+                    }
 
-        ordered = sorted(candidate_scores.items(), key=lambda item: item[1], reverse=True)
-        return [item_id for item_id, _ in ordered]
+        ordered = sorted(
+            candidate_best.values(),
+            key=lambda entry: (entry["lift"], entry["confidence"]),
+            reverse=True,
+        )
+        logger.info(
+            "Apriori candidate scoring: basketSize=%s rules=%s matchedCandidates=%s top5=%s",
+            len(basket_set),
+            int(self.rules.shape[0]),
+            len(ordered),
+            [(entry["place_id"], round(entry["lift"], 3), round(entry["confidence"], 3)) for entry in ordered[:5]],
+        )
+        return ordered
+
+    def get_candidates(self, basket_ids: Iterable[str]) -> list[str]:
+        return [str(entry["place_id"]) for entry in self.get_candidates_with_explanations(basket_ids)]

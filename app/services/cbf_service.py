@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from typing import Iterable
 
@@ -9,6 +10,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from scipy.sparse import issparse, csr_matrix
 from typing import cast
+
+logger = logging.getLogger(__name__)
 
 
 class CBFService:
@@ -60,6 +63,14 @@ class CBFService:
             if len(results) >= needed:
                 break
 
+        logger.info(
+            "CBF fallback scoring: source=%s needed=%s excluded=%s matched=%s topScore=%.4f",
+            source,
+            needed,
+            len(exclude_ids),
+            len(results),
+            results[0]["score"] if results else 0.0,
+        )
         return results
 
     def recommend_by_centroid(self, basket_ids: Iterable[str], exclude_ids: Iterable[str] | None = None, needed: int = 10) -> list[dict[str, object]]:

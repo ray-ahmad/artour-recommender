@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import Mapping, cast
+
+logger = logging.getLogger(__name__)
 
 
 class MCRSService:
@@ -43,7 +46,40 @@ class MCRSService:
             benefit_score = max(0.0, min(1.0, normalized_rating))
 
             final_score = (self.weight_cost * cost_score) + (self.weight_benefit * benefit_score)
-            scored_candidates.append({"place_id": str(place_id), "score": float(final_score)})
+            scored_candidates.append(
+                {
+                    "place_id": str(place_id),
+                    "score": float(final_score),
+                    "price": price,
+                    "rating": rating,
+                    "min_price": float(min_price),
+                    "max_price": float(max_price),
+                    "cost_score": float(cost_score),
+                    "benefit_score": float(benefit_score),
+                    "weight_cost": float(self.weight_cost),
+                    "weight_benefit": float(self.weight_benefit),
+                }
+            )
+
+        logger.info(
+            "MCRS scoring (pre-sort): candidates=%s limit=%s minPrice=%.2f maxPrice=%.2f weightCost=%.2f weightBenefit=%.2f",
+            len(scored_candidates),
+            limit,
+            min_price,
+            max_price,
+            self.weight_cost,
+            self.weight_benefit,
+        )
+        for entry in scored_candidates:
+            logger.debug(
+                "MCRS candidate: placeId=%s price=%.2f rating=%.2f costScore=%.4f benefitScore=%.4f finalScore=%.4f",
+                entry["place_id"],
+                entry["price"],
+                entry["rating"],
+                entry["cost_score"],
+                entry["benefit_score"],
+                entry["score"],
+            )
 
         scored_candidates.sort(key=lambda item: float(cast(float, item.get("score", 0.0))), reverse=True)
         return scored_candidates[:limit]
