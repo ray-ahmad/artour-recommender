@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 import logging
 from http import HTTPStatus
 
@@ -13,15 +14,20 @@ from app.api.routers.admin import router as admin_router
 from app.api.routers.health import router as health_router
 from app.api.routers.recommendations import router as recommendations_router
 from app.configs.settings import get_settings
+from app.core.correlation import CorrelationIdLogFilter
+from app.middlewares.correlation_id import CorrelationIdMiddleware
 from app.repositories.artour_repository import ArtourRepository
 from app.services.recommendation_service import RecommendationService
+from app.services.refresh_job import run_refresh_job
 from app.services.refresh_webhook_client import RefreshWebhookClient
 
 logger = logging.getLogger(__name__)
 
+_APP_LOG_FORMAT = "%(asctime)s %(levelname)-8s [cid=%(correlation_id)s] %(name)s: %(message)s"
+
 
 def _configure_app_logging() -> None:
-    """Route app loggers to uvicorn handlers after server startup."""
+    """Attach a correlation-id-aware handler/filter to app loggers after server startup."""
     uvicorn_error_logger = logging.getLogger("uvicorn.error")
 
     target_loggers = [
@@ -30,24 +36,29 @@ def _configure_app_logging() -> None:
         "app.services.refresh_job",
         "app.repositories.artour_repository",
         "app.services.recommendation_service",
+        "app.services.apriori_service",
+        "app.services.cbf_service",
+        "app.services.mcrs_service",
         "app.services.refresh_webhook_client",
         "RecommendationService",
         "ArtourRepository",
         "RefreshWebhookClient",
     ]
 
+    base_stream = getattr(uvicorn_error_logger.handlers[0], "stream", None) if uvicorn_error_logger.handlers else None
+    app_handler = logging.StreamHandler(base_stream)
+    app_handler.setFormatter(logging.Formatter(_APP_LOG_FORMAT))
+    correlation_filter = CorrelationIdLogFilter()
+
     for logger_name in target_loggers:
         app_logger = logging.getLogger(logger_name)
         app_logger.setLevel(logging.INFO)
 
-        if uvicorn_error_logger.handlers:
-            for handler in uvicorn_error_logger.handlers:
-                if handler not in app_logger.handlers:
-                    app_logger.addHandler(handler)
-            app_logger.propagate = False
-        else:
-            # Fallback if uvicorn handlers are not ready yet.
-            app_logger.propagate = True
+        if app_handler not in app_logger.handlers:
+            app_logger.addHandler(app_handler)
+        if not any(isinstance(existing_filter, CorrelationIdLogFilter) for existing_filter in app_logger.filters):
+            app_logger.addFilter(correlation_filter)
+        app_logger.propagate = False
 
 
 def _build_error_response(message: str, error: str, status_code: int) -> JSONResponse:
@@ -67,8 +78,12 @@ async def lifespan(app: FastAPI):
     logger.info("App logging initialized")
 
     service = app.state.recommendation_service
+    webhook_client = app.state.refresh_webhook_client
     try:
         service.load_state(service.state_filepath)
+    except FileNotFoundError:
+        logger.info("No persisted state found — triggering background refresh")
+        asyncio.create_task(run_refresh_job(service, webhook_client))
     except Exception as exc:
         logger.info("No persisted recommendation state loaded: %s", exc)
     yield
@@ -84,6 +99,8 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     app.state.recommendation_service = service
     app.state.refresh_webhook_client = webhook_client
+
+    app.add_middleware(CorrelationIdMiddleware)
 
     app.include_router(health_router)
     app.include_router(admin_router)

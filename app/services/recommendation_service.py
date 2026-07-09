@@ -23,11 +23,13 @@ class RecommendationService:
     def __init__(self, repository: ArtourRepository, settings: Settings | None = None) -> None:
         self.repository = repository
         self.settings = settings or get_settings()
-        self.logger = logging.getLogger("uvicorn.error")
-        self.state_filepath = os.getenv(
-            "ARTOUR_RECOMMENDATION_STATE_PATH",
-            str(Path(__file__).resolve().parents[2] / ".cache" / "recommendation_state.pkl"),
+        self.logger = logging.getLogger(__name__)
+        _default_cache = (
+            "/tmp/recommendation_state.pkl"
+            if os.getenv("SPACE_ID")
+            else str(Path(__file__).resolve().parents[2] / ".cache" / "recommendation_state.pkl")
         )
+        self.state_filepath = os.getenv("ARTOUR_RECOMMENDATION_STATE_PATH", _default_cache)
         self.text_preprocessor = TextPreprocessor()
         self.cbf_service = CBFService()
         self.apriori_service = AprioriService()
@@ -259,6 +261,7 @@ class RecommendationService:
             interactions_df,
             absolute_support=self.settings.apriori_absolute_support,
             max_len=self.settings.apriori_max_len,
+            min_user_interactions=self.settings.apriori_min_user_interactions,
         )
         self.logger.info(
             "Apriori fit finished: interactions=%s rules=%s support=%.6f durationMs=%.2f",
@@ -301,18 +304,35 @@ class RecommendationService:
             raise ValueError(f"Unknown place ids: {', '.join(sorted(set(unknown_ids)))}")
         return normalized_ids
 
-    def _rank_with_sources(self, candidate_pool: list[str], source_map: dict[str, str], k: int) -> list[dict[str, object]]:
+    def _rank_with_sources(
+        self, candidate_pool: list[str], explanation_map: dict[str, dict[str, object]], k: int
+    ) -> list[dict[str, object]]:
         ranked = self.mcrs_service.rank(candidate_pool, self._place_lookup, self._min_price, self._max_price, k)
         results: list[dict[str, object]] = []
         for index, item in enumerate(ranked, start=1):
             place_id = str(item.get("place_id", ""))
             score_val = float(cast(float, item.get("score", 0.0)))
+            explanation = explanation_map.get(place_id, {"source": "unknown", "apriori": None, "cbf": None})
             results.append(
                 {
                     "place_id": place_id,
                     "score": score_val,
                     "rank": index,
-                    "source": source_map.get(place_id, "unknown"),
+                    "source": explanation.get("source", "unknown"),
+                    "explanation": {
+                        "apriori": explanation.get("apriori"),
+                        "cbf": explanation.get("cbf"),
+                        "mcrs": {
+                            "price": item.get("price"),
+                            "rating": item.get("rating"),
+                            "min_price": item.get("min_price"),
+                            "max_price": item.get("max_price"),
+                            "cost_score": item.get("cost_score"),
+                            "benefit_score": item.get("benefit_score"),
+                            "weight_cost": item.get("weight_cost"),
+                            "weight_benefit": item.get("weight_benefit"),
+                        },
+                    },
                 }
             )
         return results
@@ -335,23 +355,45 @@ class RecommendationService:
 
     def _cascade_candidates(
         self,
-        seed_candidates: list[str],
+        apriori_explanations: list[dict[str, object]],
         padding_candidates: Iterable[dict[str, object]],
         target_n: int,
         padding_source: str,
-    ) -> tuple[list[str], dict[str, str]]:
-        cascaded_candidates = seed_candidates[:target_n]
-        source_map = {candidate: "apriori" for candidate in cascaded_candidates}
+    ) -> tuple[list[str], dict[str, dict[str, object]]]:
+        top_apriori = apriori_explanations[:target_n]
+        cascaded_candidates = [str(entry["place_id"]) for entry in top_apriori]
+        explanation_map: dict[str, dict[str, object]] = {
+            str(entry["place_id"]): {
+                "source": "apriori",
+                "apriori": {key: entry[key] for key in ("lift", "confidence", "support", "antecedents")},
+                "cbf": None,
+            }
+            for entry in top_apriori
+        }
 
         if len(cascaded_candidates) < target_n:
             needed = target_n - len(cascaded_candidates)
-            padding_ids = [str(candidate.get("place_id", "")) for candidate in padding_candidates if candidate.get("place_id")]
-            padding_ids = padding_ids[:needed]
+            padding_list = [candidate for candidate in padding_candidates if candidate.get("place_id")][:needed]
+            padding_ids = [str(candidate["place_id"]) for candidate in padding_list]
             self._extend_unique(cascaded_candidates, padding_ids, target_n)
-            for candidate_id in padding_ids:
-                source_map[candidate_id] = self._merge_source(source_map.get(candidate_id), padding_source)
+            for candidate in padding_list:
+                candidate_id = str(candidate["place_id"])
+                cbf_payload = {"score": float(cast(float, candidate.get("score", 0.0))), "source": padding_source}
+                existing = explanation_map.get(candidate_id)
+                if existing:
+                    existing["source"] = self._merge_source(cast(str, existing["source"]), padding_source)
+                    existing["cbf"] = cbf_payload
+                else:
+                    explanation_map[candidate_id] = {"source": padding_source, "apriori": None, "cbf": cbf_payload}
 
-        return cascaded_candidates[:target_n], source_map
+        self.logger.info(
+            "Cascade candidates built: apriori=%s cbfPadding=%s totalPool=%s targetN=%s",
+            len(top_apriori),
+            max(0, len(cascaded_candidates) - len(top_apriori)),
+            len(cascaded_candidates),
+            target_n,
+        )
+        return cascaded_candidates[:target_n], explanation_map
 
     def recommend_user_to_item(self, basket_ids: Iterable[str], k: int | None = None) -> list[dict[str, object]]:
         basket = [str(item).strip() for item in basket_ids if str(item).strip()]
@@ -363,44 +405,52 @@ class RecommendationService:
         target_n = self._resolve_target_n(k)
         basket_set = set(basket)
 
-        apriori_candidates = [item for item in self.apriori_service.get_candidates(basket) if item not in basket_set]
-        apriori_candidates = apriori_candidates[:target_n]
+        apriori_explanations = [
+            entry
+            for entry in self.apriori_service.get_candidates_with_explanations(basket)
+            if entry["place_id"] not in basket_set
+        ][:target_n]
+        apriori_candidates = [str(entry["place_id"]) for entry in apriori_explanations]
 
         padding_candidates = self.cbf_service.recommend_by_centroid(
             basket,
             exclude_ids=set(apriori_candidates) | basket_set,
             needed=max(0, target_n - len(apriori_candidates)),
         )
-        cascaded_candidates, source_map = self._cascade_candidates(
-            apriori_candidates,
+        cascaded_candidates, explanation_map = self._cascade_candidates(
+            apriori_explanations,
             padding_candidates,
             target_n,
             padding_source="cbf_centroid",
         )
 
-        return self._rank_with_sources(cascaded_candidates, source_map, k)
+        return self._rank_with_sources(cascaded_candidates, explanation_map, k)
 
     def recommend_item_to_item(self, anchor_id: str, k: int | None = None) -> list[dict[str, object]]:
         anchor = self._validate_request_ids([anchor_id])[0]
         k = int(k or self.settings.default_recommendation_k)
         target_n = self._resolve_target_n(k)
 
-        apriori_candidates = [item for item in self.apriori_service.get_candidates([anchor]) if item != anchor]
-        apriori_candidates = apriori_candidates[:target_n]
+        apriori_explanations = [
+            entry
+            for entry in self.apriori_service.get_candidates_with_explanations([anchor])
+            if entry["place_id"] != anchor
+        ][:target_n]
+        apriori_candidates = [str(entry["place_id"]) for entry in apriori_explanations]
 
         padding_candidates = self.cbf_service.recommend_by_anchor(
             anchor,
             exclude_ids=set(apriori_candidates) | {anchor},
             needed=max(0, target_n - len(apriori_candidates)),
         )
-        cascaded_candidates, source_map = self._cascade_candidates(
-            apriori_candidates,
+        cascaded_candidates, explanation_map = self._cascade_candidates(
+            apriori_explanations,
             padding_candidates,
             target_n,
             padding_source="cbf_anchor",
         )
 
-        return self._rank_with_sources(cascaded_candidates, source_map, k)
+        return self._rank_with_sources(cascaded_candidates, explanation_map, k)
 
     def health_snapshot(self) -> dict[str, object]:
         return {

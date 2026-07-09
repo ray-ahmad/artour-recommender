@@ -32,6 +32,7 @@ class Settings:
     request_timeout_seconds: float = field(default_factory=lambda: _env_float("ARTOUR_REQUEST_TIMEOUT_SECONDS", "15"))
     min_positive_rating: float = field(default_factory=lambda: _env_float("ARTOUR_MIN_POSITIVE_RATING", "4.0"))
     apriori_absolute_support: int = field(default_factory=lambda: _env_int("ARTOUR_APRIORI_ABSOLUTE_SUPPORT", "3"))
+    apriori_min_user_interactions: int = field(default_factory=lambda: _env_int("ARTOUR_APRIORI_MIN_USER_INTERACTIONS", "2"))
     apriori_max_len: int = field(default_factory=lambda: _env_int("ARTOUR_APRIORI_MAX_LEN", "3"))
     mcrs_min_rating_scale: float = field(default_factory=lambda: _env_float("ARTOUR_MCRS_MIN_RATING_SCALE", "1.0"))
     mcrs_max_rating_scale: float = field(default_factory=lambda: _env_float("ARTOUR_MCRS_MAX_RATING_SCALE", "5.0"))

@@ -14,6 +14,42 @@ class BaseResponse(BaseModel, Generic[T]):
     data: T
 
 
+class AprioriExplanation(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    lift: float
+    confidence: float
+    support: float
+    antecedents: list[str] = Field(default_factory=list)
+
+
+class CbfExplanation(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    similarity_score: float = Field(alias="similarityScore")
+
+
+class McrsExplanation(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    price: float
+    rating: float
+    min_price: float = Field(alias="minPrice")
+    max_price: float = Field(alias="maxPrice")
+    cost_score: float = Field(alias="costScore")
+    benefit_score: float = Field(alias="benefitScore")
+    weight_cost: float = Field(alias="weightCost")
+    weight_benefit: float = Field(alias="weightBenefit")
+
+
+class RecommendationExplanation(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    apriori: AprioriExplanation | None = None
+    cbf: CbfExplanation | None = None
+    mcrs: McrsExplanation
+
+
 class RecommendationItemResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -21,6 +57,7 @@ class RecommendationItemResponse(BaseModel):
     score: float
     rank: int
     source: str
+    explanation: RecommendationExplanation
 
 
 class UserToItemRecommendationResponse(BaseModel):

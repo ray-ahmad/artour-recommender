@@ -39,17 +39,41 @@ uvicorn app.main:app --reload
 - `ARTOUR_BACKEND_BASE_URL`
 - `ARTOUR_PLACES_PATH`
 - `ARTOUR_USER_INTERACTIONS_PATH`
+- `ARTOUR_MIN_POSITIVE_RATING`
 - `ARTOUR_REQUEST_TIMEOUT_SECONDS`
 - `ARTOUR_REFRESH_WEBHOOK_URL`
 - `ARTOUR_REFRESH_TRIGGER_TOKEN`
 - `ARTOUR_REFRESH_WEBHOOK_TOKEN`
 - `ARTOUR_REFRESH_WEBHOOK_TIMEOUT_SECONDS`
 - `ARTOUR_APRIORI_ABSOLUTE_SUPPORT`
+- `ARTOUR_APRIORI_MIN_USER_INTERACTIONS`
 - `ARTOUR_APRIORI_MAX_LEN`
+- `ARTOUR_MCRS_MIN_RATING_SCALE`
+- `ARTOUR_MCRS_MAX_RATING_SCALE`
 - `ARTOUR_DEFAULT_K`
 - `ARTOUR_DEFAULT_N`
+- `ARTOUR_MAX_USER_BASKET_SIZE`
 - `ARTOUR_WEIGHT_COST`
 - `ARTOUR_WEIGHT_BENEFIT`
+- `ARTOUR_RECOMMENDATION_STATE_PATH`
+
+## Hugging Face Spaces Env
+
+`.env` memang di-ignore karena itu untuk lokal. Di Hugging Face Spaces, isi env lewat **Settings > Variables and secrets**:
+
+- Pakai **Variables** untuk nilai biasa seperti `ARTOUR_BACKEND_BASE_URL`.
+- Pakai **Secrets** untuk token atau credential seperti `ARTOUR_REFRESH_TRIGGER_TOKEN` dan `ARTOUR_REFRESH_WEBHOOK_TOKEN`.
+
+Contoh minimum untuk Space:
+
+```text
+ARTOUR_BACKEND_BASE_URL=https://artour-api.hf.space
+ARTOUR_REFRESH_WEBHOOK_URL=
+ARTOUR_REFRESH_TRIGGER_TOKEN=
+ARTOUR_REFRESH_WEBHOOK_TOKEN=
+```
+
+Kalau backend API kamu belum di-deploy atau masih private, Space ini akan tetap hidup, tapi endpoint recommendation akan belum siap sampai `ARTOUR_BACKEND_BASE_URL` valid dan `/refresh` berhasil.
 
 ## Example Requests
 
