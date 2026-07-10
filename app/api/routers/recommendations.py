@@ -42,6 +42,7 @@ def _build_explanation(raw: dict[str, object]) -> RecommendationExplanation:
             benefit_score=_float(mcrs_raw, "benefit_score"),
             weight_cost=_float(mcrs_raw, "weight_cost"),
             weight_benefit=_float(mcrs_raw, "weight_benefit"),
+            final_score=_float(mcrs_raw, "final_score"),
         ),
     )
 

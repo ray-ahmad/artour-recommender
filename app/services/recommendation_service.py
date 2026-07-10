@@ -331,6 +331,7 @@ class RecommendationService:
                             "benefit_score": item.get("benefit_score"),
                             "weight_cost": item.get("weight_cost"),
                             "weight_benefit": item.get("weight_benefit"),
+                            "final_score": score_val,
                         },
                     },
                 }

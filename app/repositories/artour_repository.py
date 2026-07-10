@@ -68,6 +68,12 @@ class ArtourRepository:
         if "placeHashtags" not in df.columns and "hashtags" in df.columns:
             df["placeHashtags"] = df["hashtags"]
 
+        if "placePrice" not in df.columns and "price" in df.columns:
+            df["placePrice"] = df["price"]
+
+        if "placeRating" not in df.columns and "rating" in df.columns:
+            df["placeRating"] = df["rating"]
+
         for column in (
             "placeId",
             "placeName",
