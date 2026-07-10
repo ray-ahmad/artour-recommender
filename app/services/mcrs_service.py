@@ -7,11 +7,19 @@ logger = logging.getLogger(__name__)
 
 
 class MCRSService:
-    def __init__(self, min_rating_scale: float, max_rating_scale: float, weight_cost: float, weight_benefit: float) -> None:
+    def __init__(
+        self,
+        min_rating_scale: float,
+        max_rating_scale: float,
+        weight_cost: float,
+        weight_benefit: float,
+        neutral_rating_score: float = 0.5,
+    ) -> None:
         self.min_rating_scale = min_rating_scale
         self.max_rating_scale = max_rating_scale
         self.weight_cost = weight_cost
         self.weight_benefit = weight_benefit
+        self.neutral_rating_score = neutral_rating_score
 
     def rank(
         self,
@@ -39,11 +47,13 @@ class MCRSService:
                 normalized_price = 0.0
             cost_score = 1.0 - max(0.0, min(1.0, normalized_price))
 
-            if self.max_rating_scale > self.min_rating_scale:
+            if rating <= 0.0:
+                benefit_score = self.neutral_rating_score
+            elif self.max_rating_scale > self.min_rating_scale:
                 normalized_rating = (rating - self.min_rating_scale) / (self.max_rating_scale - self.min_rating_scale)
+                benefit_score = max(0.0, min(1.0, normalized_rating))
             else:
-                normalized_rating = 0.0
-            benefit_score = max(0.0, min(1.0, normalized_rating))
+                benefit_score = 0.0
 
             final_score = (self.weight_cost * cost_score) + (self.weight_benefit * benefit_score)
             scored_candidates.append(
