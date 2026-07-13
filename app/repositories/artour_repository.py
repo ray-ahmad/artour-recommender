@@ -48,6 +48,9 @@ class ArtourRepository:
         if df.empty:
             return df
 
+        if "status" in df.columns:
+            df = df[df["status"] == "PUBLISHED"].copy()
+
         if "placeId" not in df.columns and "id" in df.columns:
             df["placeId"] = df["id"]
 

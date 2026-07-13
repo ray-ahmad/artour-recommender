@@ -98,6 +98,23 @@ def test_repository_build_bundle_from_json_payloads() -> None:
     assert "userId" in bundle.interactions.columns
 
 
+def test_repository_filters_out_non_published_places() -> None:
+    repository = ArtourRepository(Settings(backend_base_url="http://example.com"))
+    places_records = build_bundle().places.to_dict(orient="records")
+    places_records[0]["status"] = "PUBLISHED"
+    places_records[1]["status"] = "UNDER_REVIEW"
+    places_records[2]["status"] = "PUBLISHED"
+    places_records[3]["status"] = "UNDER_REVIEW"
+
+    bundle = repository.build_bundle_from_payloads(
+        {"data": places_records},
+        {"results": build_bundle().interactions.to_dict(orient="records")},
+    )
+
+    assert bundle.places.shape[0] == 2
+    assert set(bundle.places["placeId"]) == {"p1", "p3"}
+
+
 def test_user_to_item_uses_centroid_padding_when_apriori_is_empty() -> None:
     service = build_service()
     recommendations = service.recommend_user_to_item(["p1", "p2"], k=2)
