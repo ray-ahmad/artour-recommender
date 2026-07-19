@@ -36,6 +36,7 @@ class Settings:
     apriori_max_len: int = field(default_factory=lambda: _env_int("ARTOUR_APRIORI_MAX_LEN", "3"))
     mcrs_min_rating_scale: float = field(default_factory=lambda: _env_float("ARTOUR_MCRS_MIN_RATING_SCALE", "1.0"))
     mcrs_max_rating_scale: float = field(default_factory=lambda: _env_float("ARTOUR_MCRS_MAX_RATING_SCALE", "5.0"))
+    mcrs_neutral_rating_score: float = field(default_factory=lambda: _env_float("ARTOUR_MCRS_NEUTRAL_RATING_SCORE", "0.5"))
     weight_cost: float = field(default_factory=lambda: _env_float("ARTOUR_WEIGHT_COST", "0.5"))
     weight_benefit: float = field(default_factory=lambda: _env_float("ARTOUR_WEIGHT_BENEFIT", "0.5"))
     default_recommendation_k: int = field(default_factory=lambda: _env_int("ARTOUR_DEFAULT_K", "10"))

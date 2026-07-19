@@ -47,7 +47,7 @@ class MCRSService:
                 normalized_price = 0.0
             cost_score = 1.0 - max(0.0, min(1.0, normalized_price))
 
-            if rating <= 0.0:
+            if rating == 0.0:
                 benefit_score = self.neutral_rating_score
             elif self.max_rating_scale > self.min_rating_scale:
                 normalized_rating = (rating - self.min_rating_scale) / (self.max_rating_scale - self.min_rating_scale)
