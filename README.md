@@ -98,3 +98,96 @@ curl http://localhost:8000/recommend/item-to-item/p1?k=5
 - Sastrawi preprocessing is memoized at refresh time for faster text normalization.
 - Apriori support is fixed at absolute 3 and converted to relative support on each refresh.
 - MCRS rating normalization uses the fixed scale of 1.0 to 5.0.
+
+---
+
+## MCP Jupyter Setup (untuk AI Coding Assistant)
+
+Supaya Antigravity (AGY) dan Claude Code bisa baca dan jalankan notebook langsung, install dan konfigurasi `mcp-jupyter`.
+
+### Install
+
+```bash
+pip install mcp-jupyter
+```
+
+### Jalankan JupyterLab
+
+**Windows:**
+
+```powershell
+# start_jupyter.ps1
+$TOKEN = "YOUR_TOKEN_HERE"
+$PORT = 8888
+jupyter lab --port $PORT --IdentityProvider.token $TOKEN --no-browser
+```
+
+**Ubuntu:**
+
+```bash
+# start_jupyter.sh
+TOKEN="YOUR_TOKEN_HERE"
+PORT=8888
+jupyter lab --port $PORT --IdentityProvider.token=$TOKEN --no-browser
+```
+
+```bash
+chmod +x start_jupyter.sh && ./start_jupyter.sh
+```
+
+### Konfigurasi Antigravity (AGY)
+
+Edit `~/.gemini/antigravity-cli/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "jupyter": {
+      "command": "python3",
+      "args": ["-m", "mcp_jupyter"],
+      "env": {
+        "TOKEN": "YOUR_TOKEN_HERE",
+        "SERVER_URL": "http://localhost:8888"
+      }
+    }
+  }
+}
+```
+
+> Windows: ganti `"python3"` dengan path absolut, misal `"C:/Program Files/Python311/python.exe"`.
+
+Setelah edit, **restart AGY**.
+
+### Konfigurasi Claude Code
+
+Edit `~/.claude.json`, tambahkan di root-level `mcpServers` dan di dalam `projects["<path-project>"]`:
+
+```json
+{
+  "mcpServers": {
+    "jupyter": {
+      "command": "python3",
+      "args": ["-m", "mcp_jupyter"],
+      "env": {
+        "TOKEN": "YOUR_TOKEN_HERE",
+        "SERVER_URL": "http://localhost:8888"
+      },
+      "type": "stdio"
+    }
+  }
+}
+```
+
+> Windows: ganti `"python3"` dengan `"C:/Program Files/Python311/python.exe"`.
+
+Setelah edit, **reload VS Code** (`Ctrl+Shift+P` → *Developer: Reload Window*).
+
+### Ganti Token
+
+Kalau mau ganti token, update **3 tempat** secara konsisten:
+
+| File | Lokasi |
+|---|---|
+| `start_jupyter.ps1` / `start_jupyter.sh` | Baris `TOKEN="..."` |
+| AGY `settings.json` | `mcpServers.jupyter.env.TOKEN` |
+| Claude Code `~/.claude.json` | `mcpServers.jupyter.env.TOKEN` |
