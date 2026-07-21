@@ -48,6 +48,9 @@ class ArtourRepository:
         if df.empty:
             return df
 
+        if "status" in df.columns:
+            df = df[df["status"] == "PUBLISHED"].copy()
+
         if "placeId" not in df.columns and "id" in df.columns:
             df["placeId"] = df["id"]
 
@@ -67,6 +70,12 @@ class ArtourRepository:
 
         if "placeHashtags" not in df.columns and "hashtags" in df.columns:
             df["placeHashtags"] = df["hashtags"]
+
+        if "placePrice" not in df.columns and "price" in df.columns:
+            df["placePrice"] = df["price"]
+
+        if "placeRating" not in df.columns and "rating" in df.columns:
+            df["placeRating"] = df["rating"]
 
         for column in (
             "placeId",

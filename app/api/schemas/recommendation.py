@@ -40,6 +40,7 @@ class McrsExplanation(BaseModel):
     benefit_score: float = Field(alias="benefitScore")
     weight_cost: float = Field(alias="weightCost")
     weight_benefit: float = Field(alias="weightBenefit")
+    final_score: float = Field(alias="finalScore")
 
 
 class RecommendationExplanation(BaseModel):

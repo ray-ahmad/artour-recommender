@@ -38,6 +38,7 @@ class RecommendationService:
             max_rating_scale=self.settings.mcrs_max_rating_scale,
             weight_cost=self.settings.weight_cost,
             weight_benefit=self.settings.weight_benefit,
+            neutral_rating_score=self.settings.mcrs_neutral_rating_score,
         )
         self._ready = False
         self._places_df = pd.DataFrame()
@@ -331,6 +332,7 @@ class RecommendationService:
                             "benefit_score": item.get("benefit_score"),
                             "weight_cost": item.get("weight_cost"),
                             "weight_benefit": item.get("weight_benefit"),
+                            "final_score": score_val,
                         },
                     },
                 }
