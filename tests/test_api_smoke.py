@@ -79,7 +79,8 @@ def build_bundle() -> DataBundle:
 
 def build_service() -> RecommendationService:
     settings = Settings(
-        backend_base_url="http://localhost:8001",
+        places_url="http://localhost:8001/places",
+        interactions_url="http://localhost:8001/user-interactions",
         apriori_absolute_support=3,
         apriori_max_len=3,
         default_recommendation_k=2,

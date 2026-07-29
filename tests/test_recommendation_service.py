@@ -74,7 +74,8 @@ def build_bundle() -> DataBundle:
 
 def build_service() -> RecommendationService:
     settings = Settings(
-        backend_base_url="http://localhost:8001",
+        places_url="http://localhost:8001/places",
+        interactions_url="http://localhost:8001/user-interactions",
         apriori_absolute_support=3,
         apriori_max_len=3,
         default_recommendation_k=2,
@@ -86,7 +87,9 @@ def build_service() -> RecommendationService:
 
 
 def test_repository_build_bundle_from_json_payloads() -> None:
-    repository = ArtourRepository(Settings(backend_base_url="http://example.com"))
+    repository = ArtourRepository(
+        Settings(places_url="http://example.com/places", interactions_url="http://example.com/user-interactions")
+    )
     bundle = repository.build_bundle_from_payloads(
         {"data": build_bundle().places.to_dict(orient="records")},
         {"results": build_bundle().interactions.to_dict(orient="records")},
@@ -99,7 +102,9 @@ def test_repository_build_bundle_from_json_payloads() -> None:
 
 
 def test_repository_filters_out_non_published_places() -> None:
-    repository = ArtourRepository(Settings(backend_base_url="http://example.com"))
+    repository = ArtourRepository(
+        Settings(places_url="http://example.com/places", interactions_url="http://example.com/user-interactions")
+    )
     places_records = build_bundle().places.to_dict(orient="records")
     places_records[0]["status"] = "PUBLISHED"
     places_records[1]["status"] = "UNDER_REVIEW"
@@ -126,7 +131,8 @@ def test_user_to_item_uses_centroid_padding_when_apriori_is_empty() -> None:
 
 def test_user_to_item_returns_empty_list_for_empty_basket() -> None:
     settings = Settings(
-        backend_base_url="http://localhost:8001",
+        places_url="http://localhost:8001/places",
+        interactions_url="http://localhost:8001/user-interactions",
         default_recommendation_k=2,
         default_candidate_overgenerate_n=2,
     )
