@@ -339,9 +339,9 @@ class RecommendationService:
             )
         return results
 
-    def _resolve_target_n(self, k: int) -> int:
+    def _resolve_target_n(self) -> int:
         configured_n = getattr(self.settings, "mcrs_n_candidates", self.settings.default_candidate_overgenerate_n)
-        return max(int(configured_n), int(k) * 2)
+        return int(configured_n)
 
     @staticmethod
     def _extend_unique(base_candidates: list[str], new_candidates: Iterable[str], limit: int) -> None:
@@ -404,7 +404,7 @@ class RecommendationService:
 
         basket = self._validate_request_ids(basket)
         k = int(k or self.settings.default_recommendation_k)
-        target_n = self._resolve_target_n(k)
+        target_n = self._resolve_target_n()
         basket_set = set(basket)
 
         apriori_explanations = [
@@ -431,7 +431,7 @@ class RecommendationService:
     def recommend_item_to_item(self, anchor_id: str, k: int | None = None) -> list[dict[str, object]]:
         anchor = self._validate_request_ids([anchor_id])[0]
         k = int(k or self.settings.default_recommendation_k)
-        target_n = self._resolve_target_n(k)
+        target_n = self._resolve_target_n()
 
         apriori_explanations = [
             entry

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from typing import Iterable, cast
 
 import pandas as pd
 from mlxtend.frequent_patterns import apriori, association_rules
@@ -36,7 +36,7 @@ class AprioriService:
         if valid_df.empty:
             return
 
-        # Remove users with too few interactions so Apriori learns meaningful co-occurrence patterns.
+        # Buang user yang interaksinya kurang, biar pola yang dipelajari Apriori lebih bermakna
         interaction_counts = valid_df.groupby(valid_df["userId"].astype(str))["refId"].size()
         eligible_users = interaction_counts[interaction_counts >= max(1, int(min_user_interactions))].index
         if len(eligible_users) == 0:
@@ -66,10 +66,6 @@ class AprioriService:
             self.rules = pd.DataFrame()
 
     def get_candidates_with_explanations(self, basket_ids: Iterable[str]) -> list[dict[str, object]]:
-        """Ordered candidates with the winning rule's metrics, same order/tie-break as get_candidates().
-
-        Each item: {"place_id": str, "lift": float, "confidence": float, "support": float, "antecedents": list[str]}
-        """
         if self.rules.empty:
             return []
 
@@ -90,8 +86,9 @@ class AprioriService:
                 if item in basket_set:
                     continue
                 current = candidate_best.get(item)
-                current_score = (current["lift"], current["confidence"]) if current is not None else None
-                if current_score is None or (lift, confidence) > current_score:
+                current_lift = cast(float, current["lift"]) if current is not None else None
+                # satu item bisa muncul di banyak rule, ambil yang lift tertinggi
+                if current_lift is None or lift > current_lift:
                     candidate_best[item] = {
                         "place_id": item,
                         "lift": lift,
@@ -102,7 +99,7 @@ class AprioriService:
 
         ordered = sorted(
             candidate_best.values(),
-            key=lambda entry: (entry["lift"], entry["confidence"]),
+            key=lambda entry: cast(float, entry["lift"]),
             reverse=True,
         )
         logger.info(
@@ -110,7 +107,10 @@ class AprioriService:
             len(basket_set),
             int(self.rules.shape[0]),
             len(ordered),
-            [(entry["place_id"], round(entry["lift"], 3), round(entry["confidence"], 3)) for entry in ordered[:5]],
+            [
+                (entry["place_id"], round(cast(float, entry["lift"]), 3), round(cast(float, entry["confidence"]), 3))
+                for entry in ordered[:5]
+            ],
         )
         return ordered
 

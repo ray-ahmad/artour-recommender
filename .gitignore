@@ -46,3 +46,6 @@ Thumbs.db
 
 # Caches
 .cache
+
+# Personal learning notes (generated study material, not project docs)
+learning/

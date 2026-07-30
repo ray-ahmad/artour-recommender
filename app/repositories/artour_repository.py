@@ -68,9 +68,6 @@ class ArtourRepository:
         if "placeAddress" not in df.columns and "address" in df.columns:
             df["placeAddress"] = df["address"]
 
-        if "placeHashtags" not in df.columns and "hashtags" in df.columns:
-            df["placeHashtags"] = df["hashtags"]
-
         if "placePrice" not in df.columns and "price" in df.columns:
             df["placePrice"] = df["price"]
 
@@ -83,7 +80,6 @@ class ArtourRepository:
             "placeCategoryName",
             "placeDescription",
             "placeAddress",
-            "placeHashtags",
         ):
             if column in df.columns:
                 df[column] = df[column].fillna("").astype(str)
@@ -123,12 +119,12 @@ class ArtourRepository:
         timeout = httpx.Timeout(self.settings.request_timeout_seconds)
         self.logger.info(
             "Repository refresh started: placesUrl=%s interactionsUrl=%s",
-            self.settings.backend_places_url,
-            self.settings.backend_interactions_url,
+            self.settings.places_url,
+            self.settings.interactions_url,
         )
         async with httpx.AsyncClient(timeout=timeout) as client:
-            places_payload = await self._request_json(client, self.settings.backend_places_url)
-            interactions_payload = await self._request_json(client, self.settings.backend_interactions_url)
+            places_payload = await self._request_json(client, self.settings.places_url)
+            interactions_payload = await self._request_json(client, self.settings.interactions_url)
         bundle = self.build_bundle_from_payloads(places_payload, interactions_payload)
         self.logger.info(
             "Repository refresh finished: places=%s interactions=%s",

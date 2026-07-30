@@ -94,7 +94,7 @@ class TextPreprocessor:
         unknown_words = [word for word in unique_words if word not in self._memoized_stems and word not in self._stopwords]
         self._parallel_stem_unknown_words(unknown_words)
 
-        # Cache stopwords/empty tokens locally to avoid repeated checks in row mapping.
+        # Simpan kata yang bukan stem (stopword/kosong) biar nggak dicek berulang-ulang nanti
         for word in unique_words:
             if word not in self._memoized_stems:
                 self._memoized_stems[word] = ""
