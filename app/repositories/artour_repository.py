@@ -68,9 +68,6 @@ class ArtourRepository:
         if "placeAddress" not in df.columns and "address" in df.columns:
             df["placeAddress"] = df["address"]
 
-        if "placeHashtags" not in df.columns and "hashtags" in df.columns:
-            df["placeHashtags"] = df["hashtags"]
-
         if "placePrice" not in df.columns and "price" in df.columns:
             df["placePrice"] = df["price"]
 
@@ -83,7 +80,6 @@ class ArtourRepository:
             "placeCategoryName",
             "placeDescription",
             "placeAddress",
-            "placeHashtags",
         ):
             if column in df.columns:
                 df[column] = df[column].fillna("").astype(str)

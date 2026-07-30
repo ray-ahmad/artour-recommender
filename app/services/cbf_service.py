@@ -82,20 +82,19 @@ class CBFService:
         if self.tfidf_matrix is None:
             return []
 
-        # Safely slice sparse matrix and convert subset to dense
-        # Build dense rows by fetching each row to avoid advanced indexing on sparse matrices
+        # Ambil datanya baris per baris dengan cara yang aman, lalu ubah jadi bentuk biasa (bukan hemat memori lagi)
         dense_rows = []
         for idx in basket_indices:
             try:
                 row = self.tfidf_matrix.getrow(int(idx))
             except Exception:
-                # Convert to CSR then fetch row to avoid advanced indexing on generic spmatrix
+                # Ubah dulu ke format CSR, baru ambil barisnya, biar lebih aman
                 tocsr = getattr(self.tfidf_matrix, "tocsr", None)
                 if callable(tocsr):
                     csr = cast(csr_matrix, tocsr())
                     row = csr.getrow(int(idx))
                 else:
-                    # Last-resort: attempt getrow again (some implementations provide it)
+                    # Jalan terakhir: coba getrow lagi (beberapa implementasi ada ini)
                     row = self.tfidf_matrix.getrow(int(idx))
 
             if hasattr(row, "toarray"):

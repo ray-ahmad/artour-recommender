@@ -3,9 +3,7 @@ from functools import lru_cache
 import os
 from dotenv import load_dotenv
 
-# Load .env file so environment variables defined there are available at runtime
 load_dotenv()
-
 
 def _env(name: str, default: str) -> str:
     return os.getenv(name, default)

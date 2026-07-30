@@ -25,9 +25,8 @@ logger = logging.getLogger(__name__)
 
 _APP_LOG_FORMAT = "%(asctime)s %(levelname)-8s [cid=%(correlation_id)s] %(name)s: %(message)s"
 
-
+# logging dengan correlation-id
 def _configure_app_logging() -> None:
-    """Attach a correlation-id-aware handler/filter to app loggers after server startup."""
     uvicorn_error_logger = logging.getLogger("uvicorn.error")
 
     target_loggers = [
