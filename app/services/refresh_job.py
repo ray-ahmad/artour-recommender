@@ -40,16 +40,15 @@ async def run_refresh_job(
     elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
     logger.info("Refresh job finished: refreshId=%s status=%s durationMs=%s", job_id, status, elapsed_ms)
 
-    payload = RefreshWebhookPayload(
-        refresh_id=job_id,
-        status=status,
-        finished_at=datetime.now(timezone.utc),
-        places_count=service.places_count if status == "success" else None,
-        interactions_count=service.interactions_count if status == "success" else None,
-        error=error_message,
-    )
-
     try:
+        payload = RefreshWebhookPayload(
+            refresh_id=job_id,
+            status=status,
+            finished_at=datetime.now(timezone.utc),
+            places_count=service.places_count if status == "success" else None,
+            interactions_count=service.interactions_count if status == "success" else None,
+            error=error_message,
+        )
         await webhook_client.send(payload)
         logger.info("Refresh job webhook sent: refreshId=%s", job_id)
     except Exception as exc:

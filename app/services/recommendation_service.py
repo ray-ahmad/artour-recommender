@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import logging
 import os
@@ -46,6 +47,8 @@ class RecommendationService:
         self._place_lookup: dict[str, dict[str, float]] = {}
         self._min_price = 0.0
         self._max_price = 0.0
+        # refresh locking to prevent more than one refresh job running
+        self._refresh_lock = asyncio.Lock()
 
     @property
     def is_ready(self) -> bool:
@@ -209,6 +212,37 @@ class RecommendationService:
         self.logger.info("Recommendation refresh started")
         bundle = bundle or await self.repository.refresh()
 
+        # do refresh in background thread to avoid blocking
+        # await/httpx should not be called in this background thread
+        async with self._refresh_lock:
+            artifacts = await asyncio.to_thread(self._build_refresh_artifacts, bundle)
+
+            self._places_df = artifacts["places_df"]
+            self._interactions_df = artifacts["interactions_df"]
+            self._place_lookup = artifacts["place_lookup"]
+            self._min_price = artifacts["min_price"]
+            self._max_price = artifacts["max_price"]
+            self.cbf_service = artifacts["cbf_service"]
+            self.apriori_service = artifacts["apriori_service"]
+            self._ready = True
+
+            save_state_started = time.perf_counter()
+            await asyncio.to_thread(self.save_state, self.state_filepath)
+            self.logger.info(
+                "State save finished: path=%s durationMs=%.2f",
+                self.state_filepath,
+                (time.perf_counter() - save_state_started) * 1000,
+            )
+
+        self.logger.info(
+            "Recommendation refresh finished: places=%s interactions=%s durationMs=%.2f",
+            self.places_count,
+            self.interactions_count,
+            (time.perf_counter() - refresh_started) * 1000,
+        )
+        return bundle
+
+    def _build_refresh_artifacts(self, bundle: DataBundle) -> dict[str, object]:
         preprocess_started = time.perf_counter()
         places_df = self.text_preprocessor.preprocess_places(bundle.places)
         self.logger.info(
@@ -243,14 +277,15 @@ class RecommendationService:
             (time.perf_counter() - interaction_clean_started) * 1000,
         )
 
-        self._places_df = places_df
-        self._interactions_df = interactions_df
-        self._place_lookup = self._build_place_lookup(places_df)
-        self._min_price = float(places_df["placePrice"].min()) if not places_df.empty else 0.0
-        self._max_price = float(places_df["placePrice"].max()) if not places_df.empty else 0.0
+        place_lookup = self._build_place_lookup(places_df)
+        min_price = float(places_df["placePrice"].min()) if not places_df.empty else 0.0
+        max_price = float(places_df["placePrice"].max()) if not places_df.empty else 0.0
 
+        # temporarily store the new CBF and Apriori services in local variables to avoid overwriting the existing ones
+        # until the refresh is complete
         cbf_fit_started = time.perf_counter()
-        self.cbf_service.fit(places_df)
+        new_cbf_service = CBFService()
+        new_cbf_service.fit(places_df)
         self.logger.info(
             "CBF fit finished: places=%s durationMs=%.2f",
             int(places_df.shape[0]),
@@ -258,7 +293,8 @@ class RecommendationService:
         )
 
         apriori_fit_started = time.perf_counter()
-        self.apriori_service.fit(
+        new_apriori_service = AprioriService()
+        new_apriori_service.fit(
             interactions_df,
             absolute_support=self.settings.apriori_absolute_support,
             max_len=self.settings.apriori_max_len,
@@ -267,24 +303,20 @@ class RecommendationService:
         self.logger.info(
             "Apriori fit finished: interactions=%s rules=%s support=%.6f durationMs=%.2f",
             int(interactions_df.shape[0]),
-            int(self.apriori_service.rules.shape[0]) if hasattr(self.apriori_service.rules, "shape") else 0,
-            float(self.apriori_service.relative_support),
+            int(new_apriori_service.rules.shape[0]) if hasattr(new_apriori_service.rules, "shape") else 0,
+            float(new_apriori_service.relative_support),
             (time.perf_counter() - apriori_fit_started) * 1000,
         )
 
-        self._ready = True
-
-        save_state_started = time.perf_counter()
-        self.save_state(self.state_filepath)
-        self.logger.info("State save finished: path=%s durationMs=%.2f", self.state_filepath, (time.perf_counter() - save_state_started) * 1000)
-
-        self.logger.info(
-            "Recommendation refresh finished: places=%s interactions=%s durationMs=%.2f",
-            self.places_count,
-            self.interactions_count,
-            (time.perf_counter() - refresh_started) * 1000,
-        )
-        return bundle
+        return {
+            "places_df": places_df,
+            "interactions_df": interactions_df,
+            "place_lookup": place_lookup,
+            "min_price": min_price,
+            "max_price": max_price,
+            "cbf_service": new_cbf_service,
+            "apriori_service": new_apriori_service,
+        }
 
     def _ensure_ready(self) -> None:
         if not self._ready:
