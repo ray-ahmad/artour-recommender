@@ -9,3 +9,14 @@ httpx
 pydantic
 pytest
 python-dotenv
+
+# --- MCP Jupyter tooling (untuk AI coding assistant, bukan dependency runtime API) ---
+# Versi mcp dan jupyter-kernel-client di-pin karena mcp-jupyter mendeklarasikan
+# dependency-nya tanpa upper bound, sehingga versi terbaru bisa breaking:
+#   - jupyter-kernel-client>=1.0.0 me-rename class KernelClient -> JupyterKernelClient
+#   - mcp>=2.0.0 me-rename modul mcp.server.fastmcp -> mcp.server.mcpserver
+# Lihat README.md bagian "Setup MCP Jupyter" untuk detail troubleshooting.
+jupyterlab
+mcp-jupyter
+jupyter-kernel-client==0.15.0
+mcp==1.29.0

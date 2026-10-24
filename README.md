@@ -1,34 +1,34 @@
 # ARTour Recommender API
 
-FastAPI microservice for ARTour recommendations with two explicit endpoints:
+Microservice FastAPI untuk rekomendasi ARTour dengan dua endpoint utama:
 
 - `POST /recommend/user-to-item`
 - `GET /recommend/item-to-item/{id}`
 
-The service uses a pragmatic Service-Repo-Handler structure:
+Layanan ini menggunakan struktur Service-Repo-Handler yang praktis:
 
-- `app/api/routers/` for handlers
-- `app/api/schemas/` for Pydantic contracts
-- `app/services/` for Apriori, CBF, MCRS, and NLP memoization
-- `app/repositories/` for JSON data loading from the ARTour backend
-- `app/configs/` for static config and environment binding
+- `app/api/routers/` untuk handler
+- `app/api/schemas/` untuk kontrak Pydantic
+- `app/services/` untuk Apriori, CBF, MCRS, dan memoization NLP
+- `app/repositories/` untuk pemuatan data JSON dari backend ARTour
+- `app/configs/` untuk konfigurasi statis dan binding environment
 
-## Data Flow
+## Alur Data
 
-The repository fetches JSON from the ARTour backend endpoints:
+Repository mengambil JSON dari endpoint backend ARTour:
 
 - `/places`
 - `/user-interactions`
 
-The payload is converted directly into in-memory pandas DataFrames. No CSV file is read or written by the API.
+Payload tersebut langsung dikonversi menjadi DataFrame pandas di memori. API ini tidak membaca maupun menulis file CSV sama sekali.
 
-## Startup Behavior
+## Perilaku saat Startup
 
-On startup, the app attempts an automatic refresh. If the backend is unavailable, the service stays up but returns a non-ready health state until `/refresh` succeeds.
+Saat startup, aplikasi otomatis mencoba melakukan refresh. Apabila backend belum dapat diakses, layanan tetap berjalan, namun status health-nya "belum siap" hingga `/refresh` berhasil.
 
-The `/refresh` endpoint accepts an optional `refreshId`, responds with `202 Accepted`, and completes the refresh in the background before sending a webhook callback to NestJS. If `ARTOUR_REFRESH_TRIGGER_TOKEN` is set, the request must include `X-ARTOUR-REFRESH-TRIGGER-TOKEN`.
+Endpoint `/refresh` menerima `refreshId` opsional, langsung membalas `202 Accepted`, kemudian menyelesaikan proses refresh di background sebelum mengirim webhook callback ke NestJS. Apabila `ARTOUR_REFRESH_TRIGGER_TOKEN` diset, request wajib menyertakan header `X-ARTOUR-REFRESH-TRIGGER-TOKEN`.
 
-## Run
+## Menjalankan Layanan
 
 ```bash
 uvicorn app.main:app --reload
@@ -57,12 +57,12 @@ uvicorn app.main:app --reload
 - `ARTOUR_WEIGHT_BENEFIT`
 - `ARTOUR_RECOMMENDATION_STATE_PATH`
 
-## Hugging Face Spaces Env
+## Environment di Hugging Face Spaces
 
-`.env` memang di-ignore karena itu untuk lokal. Di Hugging Face Spaces, isi env lewat **Settings > Variables and secrets**:
+File `.env` sengaja di-ignore karena bersifat khusus untuk lingkungan lokal. Di Hugging Face Spaces, environment diisi melalui **Settings > Variables and secrets**:
 
-- Pakai **Variables** untuk nilai biasa seperti `ARTOUR_BACKEND_BASE_URL`.
-- Pakai **Secrets** untuk token atau credential seperti `ARTOUR_REFRESH_TRIGGER_TOKEN` dan `ARTOUR_REFRESH_WEBHOOK_TOKEN`.
+- Gunakan **Variables** untuk nilai biasa seperti `ARTOUR_BACKEND_BASE_URL`.
+- Gunakan **Secrets** untuk token atau credential seperti `ARTOUR_REFRESH_TRIGGER_TOKEN` dan `ARTOUR_REFRESH_WEBHOOK_TOKEN`.
 
 Contoh minimum untuk Space:
 
@@ -73,9 +73,9 @@ ARTOUR_REFRESH_TRIGGER_TOKEN=
 ARTOUR_REFRESH_WEBHOOK_TOKEN=
 ```
 
-Kalau backend API kamu belum di-deploy atau masih private, Space ini akan tetap hidup, tapi endpoint recommendation akan belum siap sampai `ARTOUR_BACKEND_BASE_URL` valid dan `/refresh` berhasil.
+Apabila backend API belum di-deploy atau masih bersifat private, Space ini akan tetap berjalan, tetapi endpoint recommendation belum siap digunakan hingga `ARTOUR_BACKEND_BASE_URL` valid dan `/refresh` berhasil.
 
-## Example Requests
+## Contoh Request
 
 ### User-to-item
 
@@ -91,27 +91,70 @@ curl -X POST http://localhost:8000/recommend/user-to-item \
 curl http://localhost:8000/recommend/item-to-item/p1?k=5
 ```
 
-## Notes
+## Catatan
 
-- User-to-item pads missing Apriori results with CBF using the centroid of the full basket.
-- Item-to-item pads missing Apriori results with CBF using the single anchor item.
-- Sastrawi preprocessing is memoized at refresh time for faster text normalization.
-- Apriori support is fixed at absolute 3 and converted to relative support on each refresh.
-- MCRS rating normalization uses the fixed scale of 1.0 to 5.0.
+- User-to-item menambal hasil Apriori yang kosong dengan CBF, menggunakan centroid dari seluruh basket.
+- Item-to-item menambal hasil Apriori yang kosong dengan CBF, menggunakan satu item anchor.
+- Preprocessing Sastrawi di-memoize saat refresh agar normalisasi teks lebih cepat.
+- Support Apriori tetap pada angka absolut 3, dan dikonversi menjadi relative support pada setiap refresh.
+- Normalisasi rating MCRS menggunakan skala tetap 1.0 sampai 5.0.
 
 ---
 
-## MCP Jupyter Setup (untuk AI Coding Assistant)
+## Setup MCP Jupyter (untuk AI Coding Assistant)
 
-Supaya Antigravity (AGY) dan Claude Code bisa baca dan jalankan notebook langsung, install dan konfigurasi `mcp-jupyter`.
+Agar Antigravity (AGY) dan Claude Code dapat membaca dan menjalankan notebook secara langsung, `mcp-jupyter` perlu di-install dan dikonfigurasi sebagai MCP server yang terhubung ke JupyterLab lokal.
 
-### Install
+### 1. Instalasi Dependency
+
+Dependency untuk tooling ini sudah didaftarkan di `requirements.txt` (bagian "MCP Jupyter tooling"), sehingga cukup jalankan:
 
 ```bash
-pip install mcp-jupyter
+pip install -r requirements.txt
 ```
 
-### Jalankan JupyterLab
+Atau instalasi manual:
+
+```bash
+pip install jupyterlab mcp-jupyter "jupyter-kernel-client==0.15.0" "mcp==1.29.0"
+```
+
+> `jupyterlab` **wajib** ikut ter-install. `mcp-jupyter` tidak membawa `jupyterlab` sebagai dependency, sehingga tanpa itu, perintah `jupyter lab` akan gagal dengan error `Jupyter command 'jupyter-lab' not found`.
+
+**Isu versi yang perlu diperhatikan:** `mcp-jupyter` mendeklarasikan beberapa dependency-nya tanpa batas atas versi, sehingga `pip install` polos dapat menarik versi terbaru yang breaking. Dua kasus yang sudah terjadi:
+
+1. **`jupyter-kernel-client`** — `mcp-jupyter` bergantung pada `jupyter-kernel-client>=0.8.0`, sehingga pip dapat menarik versi terbaru (`1.0.0`) yang sudah me-rename class `KernelClient` menjadi `JupyterKernelClient`. Apabila hal ini terjadi, `mcp-jupyter` akan gagal start dengan error:
+
+   ```
+   ImportError: cannot import name 'KernelClient' from 'jupyter_kernel_client'
+   ```
+
+2. **`mcp`** — `mcp-jupyter` bergantung pada `mcp[cli]>=1.13.1`, sehingga pip dapat menarik versi terbaru (`2.0.0`) yang sudah me-rename modul `mcp.server.fastmcp` menjadi `mcp.server.mcpserver`. Apabila hal ini terjadi, `mcp-jupyter` akan gagal start dengan error:
+
+   ```
+   ModuleNotFoundError: No module named 'mcp.server.fastmcp'
+   ```
+
+Solusinya, pin kedua dependency tersebut ke versi lama yang masih kompatibel (nilai ini sudah ada di `requirements.txt`):
+
+```bash
+pip install "jupyter_kernel_client==0.15.0" "mcp==1.29.0"
+```
+
+Verifikasi cepat apakah kedua import sudah berjalan dengan benar:
+
+```bash
+python3 -c "from jupyter_kernel_client import KernelClient; print('OK')"
+python3 -c "from mcp.server.fastmcp import FastMCP; print('OK')"
+```
+
+Atau verifikasi langsung dengan menjalankan server MCP-nya secara manual — kalau tidak ada traceback dan muncul log `Starting MCP server with stdio transport`, berarti sudah beres:
+
+```bash
+TOKEN=YOUR_TOKEN_HERE SERVER_URL=http://localhost:8888 python3 -m mcp_jupyter
+```
+
+### 2. Menjalankan JupyterLab
 
 **Windows:**
 
@@ -122,7 +165,7 @@ $PORT = 8888
 jupyter lab --port $PORT --IdentityProvider.token $TOKEN --no-browser
 ```
 
-**Ubuntu:**
+**Ubuntu / Linux:**
 
 ```bash
 # start_jupyter.sh
@@ -135,9 +178,13 @@ jupyter lab --port $PORT --IdentityProvider.token=$TOKEN --no-browser
 chmod +x start_jupyter.sh && ./start_jupyter.sh
 ```
 
-### Konfigurasi Antigravity (AGY)
+Proses ini perlu dijalankan di terminal terpisah dan dibiarkan tetap hidup (tidak ditutup) selama akan digunakan melalui MCP — `mcp-jupyter` terhubung ke server yang sedang berjalan ini, bukan membuat proses baru.
 
-Edit `~/.gemini/antigravity-cli/settings.json`:
+`YOUR_TOKEN_HERE` perlu diganti dengan token acak yang aman sebelum digunakan secara aktual, dan placeholder ini tidak boleh dibiarkan di environment yang dapat diakses pihak lain.
+
+### 3. Konfigurasi Antigravity (AGY)
+
+Edit `~/.gemini/antigravity-cli/settings.json`, tambahkan blok `mcpServers`:
 
 ```json
 {
@@ -154,40 +201,43 @@ Edit `~/.gemini/antigravity-cli/settings.json`:
 }
 ```
 
-> Windows: ganti `"python3"` dengan path absolut, misal `"C:/Program Files/Python311/python.exe"`.
+> Windows: ganti `"python3"` dengan path absolut, misalnya `"C:/Program Files/Python311/python.exe"`.
 
-Setelah edit, **restart AGY**.
+Setelah diedit, **restart AGY**.
 
-### Konfigurasi Claude Code
+### 4. Konfigurasi Claude Code
 
-Edit `~/.claude.json`, tambahkan di root-level `mcpServers` dan di dalam `projects["<path-project>"]`:
+Cara paling aman adalah melalui CLI `claude mcp`, agar file state internal `~/.claude.json` tidak diedit manual dan berisiko corrupt:
 
-```json
-{
-  "mcpServers": {
-    "jupyter": {
-      "command": "python3",
-      "args": ["-m", "mcp_jupyter"],
-      "env": {
-        "TOKEN": "YOUR_TOKEN_HERE",
-        "SERVER_URL": "http://localhost:8888"
-      },
-      "type": "stdio"
-    }
-  }
-}
+```bash
+claude mcp add-json jupyter '{"command":"python3","args":["-m","mcp_jupyter"],"env":{"TOKEN":"YOUR_TOKEN_HERE","SERVER_URL":"http://localhost:8888"},"type":"stdio"}'
 ```
+
+Perintah ini otomatis menambahkan entry ke `mcpServers` di dalam `projects["<path-project-ini>"]` pada `~/.claude.json`.
 
 > Windows: ganti `"python3"` dengan `"C:/Program Files/Python311/python.exe"`.
 
-Setelah edit, **reload VS Code** (`Ctrl+Shift+P` → *Developer: Reload Window*).
+Cara alternatif (edit manual): buka `~/.claude.json`, cari key `projects["<path-project>"]`, lalu tambahkan `mcpServers.jupyter` dengan isi JSON yang sama seperti di atas.
 
-### Ganti Token
+Setelah dikonfigurasi, **reload window VS Code** (`Ctrl+Shift+P` → *Developer: Reload Window*), atau restart sesi `claude` CLI.
 
-Kalau mau ganti token, update **3 tempat** secara konsisten:
+### 5. Verifikasi Koneksi
+
+```bash
+claude mcp list
+```
+
+Apabila JupyterLab dari langkah 2 sedang berjalan dan token-nya sesuai, status yang tampil harus `✔ Connected`. Apabila muncul `✘ Failed to connect — Connection closed`, periksa dua hal berikut:
+
+1. JupyterLab (`start_jupyter.sh` / `start_jupyter.ps1`) memang sedang berjalan di `localhost:8888`.
+2. `TOKEN` pada konfigurasi MCP sama persis dengan `TOKEN` yang digunakan JupyterLab saat start.
+
+### Mengganti Token
+
+Apabila token perlu diganti, **3 tempat** berikut harus diperbarui secara konsisten:
 
 | File | Lokasi |
 |---|---|
 | `start_jupyter.ps1` / `start_jupyter.sh` | Baris `TOKEN="..."` |
 | AGY `settings.json` | `mcpServers.jupyter.env.TOKEN` |
-| Claude Code `~/.claude.json` | `mcpServers.jupyter.env.TOKEN` |
+| Claude Code | `mcpServers.jupyter.env.TOKEN` di `~/.claude.json`, atau jalankan ulang `claude mcp add-json` dengan token baru |
