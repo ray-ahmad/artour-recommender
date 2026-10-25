@@ -1,0 +1,12 @@
+{
+  "include": [
+    "src",
+    "tests",
+    "cmd"
+  ],
+  "extraPaths": [
+    "src"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingTypeStubs": false
+}

@@ -5,13 +5,25 @@ Microservice FastAPI untuk rekomendasi ARTour dengan dua endpoint utama:
 - `POST /recommend/user-to-item`
 - `GET /recommend/item-to-item/{id}`
 
-Layanan ini menggunakan struktur Service-Repo-Handler yang praktis:
+Layanan ini mengadopsi standar **Clean Architecture (src-layout)** yang selaras dengan backend microservice Temas:
 
-- `app/api/routers/` untuk handler
-- `app/api/schemas/` untuk kontrak Pydantic
-- `app/services/` untuk Apriori, CBF, MCRS, dan memoization NLP
-- `app/repositories/` untuk pemuatan data JSON dari backend ARTour
-- `app/configs/` untuk konfigurasi statis dan binding environment
+- `cmd/server/`: Entrypoint bootstrapping aplikasi (`python -m cmd.server.main`)
+- `src/config/`: Sentralisasi konfigurasi dan binding environment variables (`src.config.settings`)
+- `src/adapter/`:
+  - `handlers/`: HTTP Controllers/Handlers (`health_handler`, `admin_handler`, `recommendation_handler`)
+  - `presenter/`: Response formatter & payload envelopes (`src.adapter.presenter.response`)
+  - `routes/`: Routing aggregation (`init_routes()`)
+- `src/entity/`: DTOs, request & response schemas (`recommendation_dto`, `admin_dto`, `model_dto`)
+- `src/module/recommendation/`:
+  - `repository.py`: Pemuatan data dari backend ARTour
+  - `service.py`: Core logic orchestrator rekomendasi
+  - `refresh_job.py`: Asynchronous background refresh job
+  - `algorithms/`: Sub-engine rekomendasi (`apriori`, `cbf`, `mcrs`, `text_preprocessor`)
+- `src/clients/`: Integrasi eksternal (`webhook_client.py`)
+- `src/infrastructure/`:
+  - `server/`: Factory FastAPI engine, lifespan, exception handler (`src.infrastructure.server.rest`)
+  - `middlewares/`: Correlation ID middleware & logger filter
+- `src/shared/`: Shared exceptions & utilities
 
 ## Alur Data
 
@@ -31,7 +43,12 @@ Endpoint `/refresh` menerima `refreshId` opsional, langsung membalas `202 Accept
 ## Menjalankan Layanan
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn src.infrastructure.server.rest:app --reload
+```
+
+Atau menggunakan runner CLI:
+```bash
+python -m cmd.server.main
 ```
 
 ## Environment Variables
