@@ -4,20 +4,20 @@ from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 import os
 import re
-from typing import Any, Iterable
+from typing import cast
 
 import pandas as pd
+from Sastrawi.Stemmer.CachedStemmer import CachedStemmer
 from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
 
-
-_PROCESS_STEMMER: Any | None = None
+_PROCESS_STEMMER: CachedStemmer | None = None
 _PROCESS_STOPWORDS: set[str] | None = None
 
 
 def _init_stemming_worker(stopwords: tuple[str, ...]) -> None:
     global _PROCESS_STEMMER, _PROCESS_STOPWORDS
-    _PROCESS_STEMMER = StemmerFactory().create_stemmer()
+    _PROCESS_STEMMER = cast(CachedStemmer, StemmerFactory().create_stemmer())
     _PROCESS_STOPWORDS = set(stopwords)
 
 
@@ -48,11 +48,37 @@ class TextPreprocessor:
     )
 
     def __init__(self) -> None:
-        self._stemmer: Any = StemmerFactory().create_stemmer()
+        self._stemmer: CachedStemmer = cast(CachedStemmer, StemmerFactory().create_stemmer())
         self._stopwords: set[str] = set(StopWordRemoverFactory().get_stop_words())
         self._memoized_stems: dict[str, str] = {}
         self._parallel_threshold = int(os.getenv("ARTOUR_STEMMING_PARALLEL_THRESHOLD", "300"))
         self._max_workers = max(1, int(os.getenv("ARTOUR_STEMMING_MAX_WORKERS", str(os.cpu_count() or 1))))
+
+    def preprocess_places(self, places_df: pd.DataFrame) -> pd.DataFrame:
+        df = places_df.copy()
+        if df.empty:
+            df["clean_text"] = pd.Series(dtype=str)
+            return df
+
+        combined = df.reindex(columns=self.TEXT_COLUMNS, fill_value="").fillna("").astype(str).agg(" ".join, axis=1)
+        clean_text = combined.map(self._clean_text)
+        unique_words = {word for text in clean_text.tolist() for word in text.split() if word}
+
+        unknown_words = [word for word in unique_words if word not in self._memoized_stems and word not in self._stopwords]
+        self._parallel_stem_unknown_words(unknown_words)
+
+        for word in unique_words:
+            if word not in self._memoized_stems:
+                self._memoized_stems[word] = ""
+
+        df["clean_text"] = clean_text.map(
+            lambda text: " ".join(
+                self._memoized_stems.get(word, "")
+                for word in str(text).split()
+                if self._memoized_stems.get(word, "")
+            )
+        )
+        return df
 
     def _clean_text(self, value: str) -> str:
         value = str(value).lower()
@@ -87,29 +113,3 @@ class TextPreprocessor:
         ) as executor:
             for word, stemmed in executor.map(_stem_word_worker, unknown_words, chunksize=chunksize):
                 self._memoized_stems[word] = str(stemmed)
-
-    def preprocess_places(self, places_df: pd.DataFrame) -> pd.DataFrame:
-        df = places_df.copy()
-        if df.empty:
-            df["clean_text"] = pd.Series(dtype=str)
-            return df
-
-        combined = df.reindex(columns=self.TEXT_COLUMNS, fill_value="").fillna("").astype(str).agg(" ".join, axis=1)
-        clean_text = combined.map(self._clean_text)
-        unique_words = {word for text in clean_text.tolist() for word in text.split() if word}
-
-        unknown_words = [word for word in unique_words if word not in self._memoized_stems and word not in self._stopwords]
-        self._parallel_stem_unknown_words(unknown_words)
-
-        for word in unique_words:
-            if word not in self._memoized_stems:
-                self._memoized_stems[word] = ""
-
-        df["clean_text"] = clean_text.map(
-            lambda text: " ".join(
-                self._memoized_stems.get(word, "")
-                for word in str(text).split()
-                if self._memoized_stems.get(word, "")
-            )
-        )
-        return df

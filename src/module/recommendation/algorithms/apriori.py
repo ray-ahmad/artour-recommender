@@ -6,6 +6,8 @@ from typing import Iterable, cast
 import pandas as pd
 from mlxtend.frequent_patterns import apriori, association_rules
 
+from src.entity.recommendation import AprioriFitParams
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,10 +19,9 @@ class AprioriService:
     def fit(
         self,
         interactions_df: pd.DataFrame,
-        absolute_support: int = 3,
-        max_len: int = 3,
-        min_user_interactions: int = 2,
+        params: AprioriFitParams | None = None,
     ) -> None:
+        cfg = params or AprioriFitParams()
         self.rules = pd.DataFrame()
         self.relative_support = 0.0
 
@@ -40,7 +41,7 @@ class AprioriService:
 
         user_col = cast(pd.Series, valid_df["userId"].astype(str))
         interaction_counts = cast(pd.Series, valid_df.groupby(user_col)["refId"].size())
-        filtered_counts = cast(pd.Series, interaction_counts[interaction_counts >= max(1, int(min_user_interactions))])
+        filtered_counts = cast(pd.Series, interaction_counts[interaction_counts >= max(1, int(cfg.min_user_interactions))])
         eligible_users = set(filtered_counts.index.tolist())
         if not eligible_users:
             return
@@ -55,11 +56,11 @@ class AprioriService:
         if total_transactions == 0:
             return
 
-        self.relative_support = absolute_support / total_transactions
+        self.relative_support = cfg.absolute_support / total_transactions
         if self.relative_support >= 1.0:
             return
 
-        frequent_itemsets = apriori(basket, min_support=self.relative_support, use_colnames=True, max_len=max_len)
+        frequent_itemsets = apriori(basket, min_support=self.relative_support, use_colnames=True, max_len=cfg.max_len)
         if frequent_itemsets.empty:
             return
 

@@ -1,23 +1,29 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 import logging
 import os
 import pickle
 import time
 from pathlib import Path
-from typing import Any, Iterable, cast
+from typing import Iterable, cast
 
 import pandas as pd
+from scipy.sparse import csr_matrix
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 from src.config.settings import Settings, get_settings
-from src.entity.model_dto import DataBundle
+from src.entity.recommendation import (
+    AprioriFitParams,
+    CascadePaddingParams,
+    DataBundle,
+    MCRSRankParams,
+)
 from src.module.recommendation.algorithms import (
-    TextPreprocessor,
     AprioriService,
     CBFService,
     MCRSService,
+    TextPreprocessor,
 )
 from src.module.recommendation.repository import ArtourRepository
 
@@ -55,6 +61,8 @@ class RecommendationService:
         self._max_price = 0.0
         self._refresh_lock = asyncio.Lock()
 
+    # --- Public Properties & Methods ---
+
     @property
     def is_ready(self) -> bool:
         return self._ready
@@ -66,6 +74,199 @@ class RecommendationService:
     @property
     def interactions_count(self) -> int:
         return int(self._interactions_df.shape[0])
+
+    def health_snapshot(self) -> dict[str, object]:
+        return {
+            "ready": self.is_ready,
+            "places_count": self.places_count,
+            "interactions_count": self.interactions_count,
+        }
+
+    def save_state(self, filepath: str) -> None:
+        self.logger.info("Saving recommendation state: path=%s", filepath)
+        state_path = Path(filepath)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+
+        state = {
+            "places_df": self._places_df,
+            "interactions_df": self._interactions_df,
+            "place_lookup": self._place_lookup,
+            "min_price": self._min_price,
+            "max_price": self._max_price,
+            "cbf_state": {
+                "vectorizer": self.cbf_service.vectorizer,
+                "tfidf_matrix": self.cbf_service.tfidf_matrix,
+                "place_id_to_idx": self.cbf_service.place_id_to_idx,
+                "idx_to_place_id": self.cbf_service.idx_to_place_id,
+            },
+            "apriori_state": {
+                "rules": self.apriori_service.rules,
+                "relative_support": self.apriori_service.relative_support,
+            },
+            "text_preprocessor_state": {
+                "memoized_stems": getattr(self.text_preprocessor, "_memoized_stems", {}),
+            },
+        }
+
+        temp_path = state_path.with_suffix(f"{state_path.suffix}.tmp")
+        with temp_path.open("wb") as file_handle:
+            pickle.dump(state, file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+        temp_path.replace(state_path)
+
+    def load_state(self, filepath: str) -> None:
+        self.logger.info("Loading recommendation state: path=%s", filepath)
+        state_path = Path(filepath)
+        if not state_path.exists():
+            raise FileNotFoundError(str(state_path))
+
+        with state_path.open("rb") as file_handle:
+            state = pickle.load(file_handle)
+
+        self._places_df = cast(pd.DataFrame, state.get("places_df", pd.DataFrame()))
+        self._interactions_df = cast(pd.DataFrame, state.get("interactions_df", pd.DataFrame()))
+        self._place_lookup = dict(state.get("place_lookup", {}))
+        self._min_price = float(state.get("min_price", 0.0))
+        self._max_price = float(state.get("max_price", 0.0))
+
+        cbf_state = cast(dict[str, object], state.get("cbf_state", {}))
+        self.cbf_service.vectorizer = cast(TfidfVectorizer | None, cbf_state.get("vectorizer"))
+        self.cbf_service.tfidf_matrix = cast(csr_matrix | None, cbf_state.get("tfidf_matrix"))
+        self.cbf_service.place_id_to_idx = dict(cast(dict[str, int], cbf_state.get("place_id_to_idx", {})))
+        self.cbf_service.idx_to_place_id = dict(cast(dict[int, str], cbf_state.get("idx_to_place_id", {})))
+
+        apriori_state = cast(dict[str, object], state.get("apriori_state", {}))
+        self.apriori_service.rules = cast(pd.DataFrame, apriori_state.get("rules", pd.DataFrame()))
+        self.apriori_service.relative_support = float(cast(float, apriori_state.get("relative_support", 0.0)))
+
+        self.text_preprocessor = TextPreprocessor()
+        text_state = cast(dict[str, object], state.get("text_preprocessor_state", {}))
+        self.text_preprocessor._memoized_stems = dict(cast(dict[str, str], text_state.get("memoized_stems", {})))
+        self._ready = True
+        self.logger.info("Recommendation state loaded: places=%s interactions=%s", self.places_count, self.interactions_count)
+
+    async def refresh(
+        self,
+        bundle: DataBundle | None = None,
+    ) -> DataBundle:
+        refresh_started = time.perf_counter()
+        self.logger.info("Recommendation refresh started")
+        bundle = bundle or await self.repository.refresh()
+
+        async with self._refresh_lock:
+            artifacts = await asyncio.to_thread(self._build_refresh_artifacts, bundle)
+
+            self._places_df = cast(pd.DataFrame, artifacts["places_df"])
+            self._interactions_df = cast(pd.DataFrame, artifacts["interactions_df"])
+            self._place_lookup = cast(dict[str, dict[str, float]], artifacts["place_lookup"])
+            self._min_price = float(cast(float, artifacts["min_price"]))
+            self._max_price = float(cast(float, artifacts["max_price"]))
+            self.cbf_service = cast(CBFService, artifacts["cbf_service"])
+            self.apriori_service = cast(AprioriService, artifacts["apriori_service"])
+            self._ready = True
+
+            save_state_started = time.perf_counter()
+            await asyncio.to_thread(self.save_state, self.state_filepath)
+            self.logger.info(
+                "State save finished: path=%s durationMs=%.2f",
+                self.state_filepath,
+                (time.perf_counter() - save_state_started) * 1000,
+            )
+
+        self.logger.info(
+            "Recommendation refresh finished: places=%s interactions=%s durationMs=%.2f",
+            self.places_count,
+            self.interactions_count,
+            (time.perf_counter() - refresh_started) * 1000,
+        )
+        return bundle
+
+    def recommend_user_to_item(self, basket_ids: Iterable[str], k: int | None = None) -> list[dict[str, object]]:
+        basket = [str(item).strip() for item in basket_ids if str(item).strip()]
+        if not basket:
+            return []
+
+        basket = self._validate_request_ids(basket)
+        k = int(k or self.settings.default_recommendation_k)
+        target_n = self._resolve_target_n()
+        basket_set = set(basket)
+
+        apriori_explanations = [
+            entry
+            for entry in self.apriori_service.get_candidates_with_explanations(basket)
+            if entry["place_id"] not in basket_set
+        ][:target_n]
+        apriori_candidates = [str(entry["place_id"]) for entry in apriori_explanations]
+
+        padding_candidates = self.cbf_service.recommend_by_centroid(
+            basket,
+            exclude_ids=set(apriori_candidates) | basket_set,
+            needed=max(0, target_n - len(apriori_candidates)),
+        )
+        padding_params = CascadePaddingParams(
+            padding_candidates=padding_candidates,
+            target_n=target_n,
+            padding_source="cbf_centroid",
+        )
+        cascaded_candidates, explanation_map = self._cascade_candidates(
+            apriori_explanations,
+            padding_params,
+        )
+
+        return self._rank_with_sources(cascaded_candidates, explanation_map, k)
+
+    def recommend_item_to_item(self, anchor_id: str, k: int | None = None) -> list[dict[str, object]]:
+        anchor = self._validate_request_ids([anchor_id])[0]
+        k = int(k or self.settings.default_recommendation_k)
+        target_n = self._resolve_target_n()
+
+        apriori_explanations = [
+            entry
+            for entry in self.apriori_service.get_candidates_with_explanations([anchor])
+            if entry["place_id"] != anchor
+        ][:target_n]
+        apriori_candidates = [str(entry["place_id"]) for entry in apriori_explanations]
+
+        padding_candidates = self.cbf_service.recommend_by_anchor(
+            anchor,
+            exclude_ids=set(apriori_candidates) | {anchor},
+            needed=max(0, target_n - len(apriori_candidates)),
+        )
+        padding_params = CascadePaddingParams(
+            padding_candidates=padding_candidates,
+            target_n=target_n,
+            padding_source="cbf_anchor",
+        )
+        cascaded_candidates, explanation_map = self._cascade_candidates(
+            apriori_explanations,
+            padding_params,
+        )
+
+        return self._rank_with_sources(cascaded_candidates, explanation_map, k)
+
+    # --- Protected Methods ---
+
+    def _ensure_ready(self) -> None:
+        if not self._ready:
+            raise RuntimeError("Recommendation service is not ready. Call refresh first.")
+
+    def _validate_request_ids(self, ids: Iterable[str]) -> list[str]:
+        self._ensure_ready()
+        normalized_ids = [str(item).strip() for item in ids if str(item).strip()]
+        if not normalized_ids:
+            raise ValueError("At least one place id is required.")
+
+        if len(normalized_ids) > self.settings.max_user_basket_size:
+            raise ValueError(f"Basket exceeds max size of {self.settings.max_user_basket_size}.")
+
+        known_ids = set(self._places_df["placeId"].astype(str).tolist())
+        unknown_ids = [place_id for place_id in normalized_ids if place_id not in known_ids]
+        if unknown_ids:
+            raise ValueError(f"Unknown place ids: {', '.join(sorted(set(unknown_ids)))}")
+        return normalized_ids
+
+    def _resolve_target_n(self) -> int:
+        configured_n = getattr(self.settings, "mcrs_n_candidates", self.settings.default_candidate_overgenerate_n)
+        return int(configured_n)
 
     def _clean_interactions(self, interactions_df: pd.DataFrame, known_place_ids: set[str]) -> pd.DataFrame:
         if interactions_df.empty:
@@ -124,8 +325,7 @@ class RecommendationService:
         df = cast(pd.DataFrame, df[positive_review_mask | positive_action_mask].copy())
         return cast(pd.DataFrame, df.reset_index(drop=True))
 
-    @staticmethod
-    def _build_place_lookup(places_df: pd.DataFrame) -> dict[str, dict[str, float]]:
+    def _build_place_lookup(self, places_df: pd.DataFrame) -> dict[str, dict[str, float]]:
         lookup: dict[str, dict[str, float]] = {}
         if places_df.empty:
             return lookup
@@ -149,115 +349,6 @@ class RecommendationService:
                 "placeRating": rating,
             }
         return lookup
-
-    @staticmethod
-    def _merge_source(existing: str | None, new_source: str) -> str:
-        if not existing:
-            return new_source
-        if existing == new_source:
-            return existing
-        existing_parts = existing.split("+")
-        if new_source not in existing_parts:
-            existing_parts.append(new_source)
-        return "+".join(existing_parts)
-
-    def save_state(self, filepath: str) -> None:
-        self.logger.info("Saving recommendation state: path=%s", filepath)
-        state_path = Path(filepath)
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-
-        state = {
-            "places_df": self._places_df,
-            "interactions_df": self._interactions_df,
-            "place_lookup": self._place_lookup,
-            "min_price": self._min_price,
-            "max_price": self._max_price,
-            "cbf_state": {
-                "vectorizer": self.cbf_service.vectorizer,
-                "tfidf_matrix": self.cbf_service.tfidf_matrix,
-                "place_id_to_idx": self.cbf_service.place_id_to_idx,
-                "idx_to_place_id": self.cbf_service.idx_to_place_id,
-            },
-            "apriori_state": {
-                "rules": self.apriori_service.rules,
-                "relative_support": self.apriori_service.relative_support,
-            },
-            "text_preprocessor_state": {
-                "memoized_stems": getattr(self.text_preprocessor, "_memoized_stems", {}),
-            },
-        }
-
-        temp_path = state_path.with_suffix(f"{state_path.suffix}.tmp")
-        with temp_path.open("wb") as file_handle:
-            pickle.dump(state, file_handle, protocol=pickle.HIGHEST_PROTOCOL)
-        temp_path.replace(state_path)
-
-    def load_state(self, filepath: str) -> None:
-        self.logger.info("Loading recommendation state: path=%s", filepath)
-        state_path = Path(filepath)
-        if not state_path.exists():
-            raise FileNotFoundError(str(state_path))
-
-        with state_path.open("rb") as file_handle:
-            state = pickle.load(file_handle)
-
-        self._places_df = cast(pd.DataFrame, state.get("places_df", pd.DataFrame()))
-        self._interactions_df = cast(pd.DataFrame, state.get("interactions_df", pd.DataFrame()))
-        self._place_lookup = dict(state.get("place_lookup", {}))
-        self._min_price = float(state.get("min_price", 0.0))
-        self._max_price = float(state.get("max_price", 0.0))
-
-        cbf_state = cast(dict[str, Any], state.get("cbf_state", {}))
-        self.cbf_service.vectorizer = cbf_state.get("vectorizer")
-        self.cbf_service.tfidf_matrix = cbf_state.get("tfidf_matrix")
-        self.cbf_service.place_id_to_idx = dict(cbf_state.get("place_id_to_idx", {}))
-        self.cbf_service.idx_to_place_id = dict(cbf_state.get("idx_to_place_id", {}))
-
-        apriori_state = cast(dict[str, Any], state.get("apriori_state", {}))
-        self.apriori_service.rules = cast(pd.DataFrame, apriori_state.get("rules", pd.DataFrame()))
-        self.apriori_service.relative_support = float(apriori_state.get("relative_support", 0.0))
-
-        self.text_preprocessor = TextPreprocessor()
-        text_state = cast(dict[str, Any], state.get("text_preprocessor_state", {}))
-        self.text_preprocessor._memoized_stems = dict(text_state.get("memoized_stems", {}))
-        self._ready = True
-        self.logger.info("Recommendation state loaded: places=%s interactions=%s", self.places_count, self.interactions_count)
-
-    async def refresh(
-        self,
-        bundle: DataBundle | None = None,
-    ) -> DataBundle:
-        refresh_started = time.perf_counter()
-        self.logger.info("Recommendation refresh started")
-        bundle = bundle or await self.repository.refresh()
-
-        async with self._refresh_lock:
-            artifacts = await asyncio.to_thread(self._build_refresh_artifacts, bundle)
-
-            self._places_df = cast(pd.DataFrame, artifacts["places_df"])
-            self._interactions_df = cast(pd.DataFrame, artifacts["interactions_df"])
-            self._place_lookup = cast(dict[str, dict[str, float]], artifacts["place_lookup"])
-            self._min_price = float(cast(float, artifacts["min_price"]))
-            self._max_price = float(cast(float, artifacts["max_price"]))
-            self.cbf_service = cast(CBFService, artifacts["cbf_service"])
-            self.apriori_service = cast(AprioriService, artifacts["apriori_service"])
-            self._ready = True
-
-            save_state_started = time.perf_counter()
-            await asyncio.to_thread(self.save_state, self.state_filepath)
-            self.logger.info(
-                "State save finished: path=%s durationMs=%.2f",
-                self.state_filepath,
-                (time.perf_counter() - save_state_started) * 1000,
-            )
-
-        self.logger.info(
-            "Recommendation refresh finished: places=%s interactions=%s durationMs=%.2f",
-            self.places_count,
-            self.interactions_count,
-            (time.perf_counter() - refresh_started) * 1000,
-        )
-        return bundle
 
     def _build_refresh_artifacts(self, bundle: DataBundle) -> dict[str, object]:
         preprocess_started = time.perf_counter()
@@ -295,8 +386,8 @@ class RecommendationService:
         )
 
         place_lookup = self._build_place_lookup(places_df)
-        min_price = float(cast(Any, places_df["placePrice"].min())) if not places_df.empty else 0.0
-        max_price = float(cast(Any, places_df["placePrice"].max())) if not places_df.empty else 0.0
+        min_price = float(cast(float, places_df["placePrice"].min())) if not places_df.empty else 0.0
+        max_price = float(cast(float, places_df["placePrice"].max())) if not places_df.empty else 0.0
 
         cbf_fit_started = time.perf_counter()
         new_cbf_service = CBFService()
@@ -309,12 +400,12 @@ class RecommendationService:
 
         apriori_fit_started = time.perf_counter()
         new_apriori_service = AprioriService()
-        new_apriori_service.fit(
-            interactions_df,
+        apriori_params = AprioriFitParams(
             absolute_support=self.settings.apriori_absolute_support,
             max_len=self.settings.apriori_max_len,
             min_user_interactions=self.settings.apriori_min_user_interactions,
         )
+        new_apriori_service.fit(interactions_df, apriori_params)
         self.logger.info(
             "Apriori fit finished: interactions=%s rules=%s support=%.6f durationMs=%.2f",
             int(interactions_df.shape[0]),
@@ -333,29 +424,16 @@ class RecommendationService:
             "apriori_service": new_apriori_service,
         }
 
-    def _ensure_ready(self) -> None:
-        if not self._ready:
-            raise RuntimeError("Recommendation service is not ready. Call refresh first.")
-
-    def _validate_request_ids(self, ids: Iterable[str]) -> list[str]:
-        self._ensure_ready()
-        normalized_ids = [str(item).strip() for item in ids if str(item).strip()]
-        if not normalized_ids:
-            raise ValueError("At least one place id is required.")
-
-        if len(normalized_ids) > self.settings.max_user_basket_size:
-            raise ValueError(f"Basket exceeds max size of {self.settings.max_user_basket_size}.")
-
-        known_ids = set(self._places_df["placeId"].astype(str).tolist())
-        unknown_ids = [place_id for place_id in normalized_ids if place_id not in known_ids]
-        if unknown_ids:
-            raise ValueError(f"Unknown place ids: {', '.join(sorted(set(unknown_ids)))}")
-        return normalized_ids
-
     def _rank_with_sources(
         self, candidate_pool: list[str], explanation_map: dict[str, dict[str, object]], k: int
     ) -> list[dict[str, object]]:
-        ranked = self.mcrs_service.rank(candidate_pool, self._place_lookup, self._min_price, self._max_price, k)
+        mcrs_params = MCRSRankParams(
+            place_lookup=self._place_lookup,
+            min_price=self._min_price,
+            max_price=self._max_price,
+            limit=k,
+        )
+        ranked = self.mcrs_service.rank(candidate_pool, mcrs_params)
         results: list[dict[str, object]] = []
         for index, item in enumerate(ranked, start=1):
             place_id = str(item.get("place_id", ""))
@@ -386,12 +464,7 @@ class RecommendationService:
             )
         return results
 
-    def _resolve_target_n(self) -> int:
-        configured_n = getattr(self.settings, "mcrs_n_candidates", self.settings.default_candidate_overgenerate_n)
-        return int(configured_n)
-
-    @staticmethod
-    def _extend_unique(base_candidates: list[str], new_candidates: Iterable[str], limit: int) -> None:
+    def _extend_unique(self, base_candidates: list[str], new_candidates: Iterable[str], limit: int) -> None:
         seen = set(base_candidates)
         for candidate in new_candidates:
             candidate_id = str(candidate)
@@ -405,11 +478,9 @@ class RecommendationService:
     def _cascade_candidates(
         self,
         apriori_explanations: list[dict[str, object]],
-        padding_candidates: Iterable[dict[str, object]],
-        target_n: int,
-        padding_source: str,
+        padding: CascadePaddingParams,
     ) -> tuple[list[str], dict[str, dict[str, object]]]:
-        top_apriori = apriori_explanations[:target_n]
+        top_apriori = apriori_explanations[:padding.target_n]
         cascaded_candidates = [str(entry["place_id"]) for entry in top_apriori]
         explanation_map: dict[str, dict[str, object]] = {
             str(entry["place_id"]): {
@@ -420,90 +491,36 @@ class RecommendationService:
             for entry in top_apriori
         }
 
-        if len(cascaded_candidates) < target_n:
-            needed = target_n - len(cascaded_candidates)
-            padding_list = [candidate for candidate in padding_candidates if candidate.get("place_id")][:needed]
+        if len(cascaded_candidates) < padding.target_n:
+            needed = padding.target_n - len(cascaded_candidates)
+            padding_list = [candidate for candidate in padding.padding_candidates if candidate.get("place_id")][:needed]
             padding_ids = [str(candidate["place_id"]) for candidate in padding_list]
-            self._extend_unique(cascaded_candidates, padding_ids, target_n)
+            self._extend_unique(cascaded_candidates, padding_ids, padding.target_n)
             for candidate in padding_list:
                 candidate_id = str(candidate["place_id"])
-                cbf_payload = {"score": float(cast(float, candidate.get("score", 0.0))), "source": padding_source}
+                cbf_payload = {"score": float(cast(float, candidate.get("score", 0.0))), "source": padding.padding_source}
                 existing = explanation_map.get(candidate_id)
                 if existing:
-                    existing["source"] = self._merge_source(cast(str, existing["source"]), padding_source)
+                    existing["source"] = self._merge_source(cast(str, existing["source"]), padding.padding_source)
                     existing["cbf"] = cbf_payload
                 else:
-                    explanation_map[candidate_id] = {"source": padding_source, "apriori": None, "cbf": cbf_payload}
+                    explanation_map[candidate_id] = {"source": padding.padding_source, "apriori": None, "cbf": cbf_payload}
 
         self.logger.info(
             "Cascade candidates built: apriori=%s cbfPadding=%s totalPool=%s targetN=%s",
             len(top_apriori),
             max(0, len(cascaded_candidates) - len(top_apriori)),
             len(cascaded_candidates),
-            target_n,
+            padding.target_n,
         )
-        return cascaded_candidates[:target_n], explanation_map
+        return cascaded_candidates[:padding.target_n], explanation_map
 
-    def recommend_user_to_item(self, basket_ids: Iterable[str], k: int | None = None) -> list[dict[str, object]]:
-        basket = [str(item).strip() for item in basket_ids if str(item).strip()]
-        if not basket:
-            return []
-
-        basket = self._validate_request_ids(basket)
-        k = int(k or self.settings.default_recommendation_k)
-        target_n = self._resolve_target_n()
-        basket_set = set(basket)
-
-        apriori_explanations = [
-            entry
-            for entry in self.apriori_service.get_candidates_with_explanations(basket)
-            if entry["place_id"] not in basket_set
-        ][:target_n]
-        apriori_candidates = [str(entry["place_id"]) for entry in apriori_explanations]
-
-        padding_candidates = self.cbf_service.recommend_by_centroid(
-            basket,
-            exclude_ids=set(apriori_candidates) | basket_set,
-            needed=max(0, target_n - len(apriori_candidates)),
-        )
-        cascaded_candidates, explanation_map = self._cascade_candidates(
-            apriori_explanations,
-            padding_candidates,
-            target_n,
-            padding_source="cbf_centroid",
-        )
-
-        return self._rank_with_sources(cascaded_candidates, explanation_map, k)
-
-    def recommend_item_to_item(self, anchor_id: str, k: int | None = None) -> list[dict[str, object]]:
-        anchor = self._validate_request_ids([anchor_id])[0]
-        k = int(k or self.settings.default_recommendation_k)
-        target_n = self._resolve_target_n()
-
-        apriori_explanations = [
-            entry
-            for entry in self.apriori_service.get_candidates_with_explanations([anchor])
-            if entry["place_id"] != anchor
-        ][:target_n]
-        apriori_candidates = [str(entry["place_id"]) for entry in apriori_explanations]
-
-        padding_candidates = self.cbf_service.recommend_by_anchor(
-            anchor,
-            exclude_ids=set(apriori_candidates) | {anchor},
-            needed=max(0, target_n - len(apriori_candidates)),
-        )
-        cascaded_candidates, explanation_map = self._cascade_candidates(
-            apriori_explanations,
-            padding_candidates,
-            target_n,
-            padding_source="cbf_anchor",
-        )
-
-        return self._rank_with_sources(cascaded_candidates, explanation_map, k)
-
-    def health_snapshot(self) -> dict[str, object]:
-        return {
-            "ready": self.is_ready,
-            "places_count": self.places_count,
-            "interactions_count": self.interactions_count,
-        }
+    def _merge_source(self, existing: str | None, new_source: str) -> str:
+        if not existing:
+            return new_source
+        if existing == new_source:
+            return existing
+        existing_parts = existing.split("+")
+        if new_source not in existing_parts:
+            existing_parts.append(new_source)
+        return "+".join(existing_parts)

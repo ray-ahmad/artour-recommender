@@ -5,7 +5,7 @@ import logging
 import time
 from uuid import uuid4
 
-from src.entity.admin_dto import RefreshWebhookPayload
+from src.clients.entity.webhook import RefreshWebhookRequest
 from src.module.recommendation.service import RecommendationService
 from src.clients.webhook_client import RefreshWebhookClient
 
@@ -41,7 +41,7 @@ async def run_refresh_job(
     logger.info("Refresh job finished: refreshId=%s status=%s durationMs=%s", job_id, status, elapsed_ms)
 
     try:
-        payload = RefreshWebhookPayload(
+        payload = RefreshWebhookRequest(
             refresh_id=job_id,
             status=status,
             finished_at=datetime.now(timezone.utc),
