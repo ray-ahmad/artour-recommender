@@ -5,10 +5,10 @@ from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from src.entity.recommendation_dto import BaseResponse
+from src.adapter.presenter.recommendation import BaseOutput
 
 
-class RefreshResponse(BaseModel):
+class RefreshOutput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     status: str
@@ -17,13 +17,13 @@ class RefreshResponse(BaseModel):
     refreshed_at: datetime = Field(validation_alias=AliasChoices("refreshed_at", "refreshedAt"), serialization_alias="refreshedAt")
 
 
-class RefreshTriggerRequest(BaseModel):
+class RefreshTriggerInput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     refresh_id: str | None = Field(default=None, validation_alias=AliasChoices("refresh_id", "refreshId"), serialization_alias="refreshId")
 
 
-class RefreshAcceptedResponse(BaseModel):
+class RefreshAcceptedOutput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     status: Literal["accepted"] = "accepted"
@@ -31,18 +31,7 @@ class RefreshAcceptedResponse(BaseModel):
     accepted_at: datetime = Field(validation_alias=AliasChoices("accepted_at", "acceptedAt"), serialization_alias="acceptedAt")
 
 
-class RefreshWebhookPayload(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    refresh_id: str = Field(validation_alias=AliasChoices("refresh_id", "refreshId"), serialization_alias="refreshId")
-    status: Literal["success", "failed"]
-    finished_at: datetime = Field(validation_alias=AliasChoices("finished_at", "finishedAt"), serialization_alias="finishedAt")
-    places_count: int | None = Field(default=None, validation_alias=AliasChoices("places_count", "placesCount"), serialization_alias="placesCount")
-    interactions_count: int | None = Field(default=None, validation_alias=AliasChoices("interactions_count", "interactionsCount"), serialization_alias="interactionsCount")
-    error: str | None = None
-
-
-class HealthResponse(BaseModel):
+class HealthOutput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     status: str
@@ -51,5 +40,5 @@ class HealthResponse(BaseModel):
     interactions_count: int = Field(validation_alias=AliasChoices("interactions_count", "interactionsCount"), serialization_alias="interactionsCount")
 
 
-RefreshEnvelope = BaseResponse[RefreshResponse]
-RefreshAcceptedEnvelope = BaseResponse[RefreshAcceptedResponse]
+RefreshEnvelopeOutput = BaseOutput[RefreshOutput]
+RefreshAcceptedEnvelopeOutput = BaseOutput[RefreshAcceptedOutput]

@@ -4,37 +4,41 @@ from datetime import datetime, timezone
 import logging
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, status
 
-from src.config.settings import Settings, get_settings
-from src.adapter.handlers.dependencies import get_refresh_webhook_client, get_recommendation_service
-from src.clients.webhook_client import RefreshWebhookClient
-from src.entity.admin_dto import RefreshAcceptedEnvelope, RefreshAcceptedResponse, RefreshTriggerRequest
+from src.adapter.handlers.dependencies import (
+    AdminDependencies,
+    get_admin_dependencies,
+    verify_refresh_token,
+)
+from src.adapter.presenter.admin import (
+    RefreshAcceptedEnvelopeOutput,
+    RefreshAcceptedOutput,
+    RefreshTriggerInput,
+)
 from src.module.recommendation.refresh_job import run_refresh_job
-from src.module.recommendation.service import RecommendationService
 
 router = APIRouter(tags=["admin"])
 logger = logging.getLogger("uvicorn.error")
 
 
-@router.post("/refresh", response_model=RefreshAcceptedEnvelope, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/refresh",
+    response_model=RefreshAcceptedEnvelopeOutput,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(verify_refresh_token)],
+)
 async def refresh(
     background_tasks: BackgroundTasks,
-    payload: RefreshTriggerRequest | None = Body(default=None),
-    x_artour_refresh_token: str | None = Header(default=None, alias="X-ARTOUR-REFRESH-TRIGGER-TOKEN"),
-    settings: Settings = Depends(get_settings),
-    service: RecommendationService = Depends(get_recommendation_service),
-    webhook_client: RefreshWebhookClient = Depends(get_refresh_webhook_client),
-) -> RefreshAcceptedEnvelope:
-    if settings.refresh_trigger_token and x_artour_refresh_token != settings.refresh_trigger_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token.")
-
+    payload: RefreshTriggerInput | None = Body(default=None),
+    deps: AdminDependencies = Depends(get_admin_dependencies),
+) -> RefreshAcceptedEnvelopeOutput:
     refresh_id = payload.refresh_id if payload and payload.refresh_id else str(uuid4())
     logger.info("Refresh accepted: refreshId=%s", refresh_id)
-    background_tasks.add_task(run_refresh_job, service, webhook_client, refresh_id)
+    background_tasks.add_task(run_refresh_job, deps.service, deps.webhook_client, refresh_id)
 
-    return RefreshAcceptedEnvelope(
-        data=RefreshAcceptedResponse(
+    return RefreshAcceptedEnvelopeOutput(
+        data=RefreshAcceptedOutput(
             refresh_id=refresh_id,
             accepted_at=datetime.now(timezone.utc),
         )

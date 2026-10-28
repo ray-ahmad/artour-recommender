@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import cast
 
 import httpx
 import pandas as pd
 
 from src.config.settings import Settings, get_settings
-from src.entity.model_dto import DataBundle
+from src.entity.recommendation import DataBundle
 
 
 class ArtourRepository:
@@ -15,7 +15,46 @@ class ArtourRepository:
         self.settings = settings or get_settings()
         self.logger = logging.getLogger("uvicorn.error")
 
-    async def _request_json(self, client: httpx.AsyncClient, url: str, params: dict[str, str] | None = None) -> Any:
+    async def fetch_bundle(self) -> DataBundle:
+        return await self.refresh()
+
+    async def refresh(self) -> DataBundle:
+        timeout = httpx.Timeout(self.settings.request_timeout_seconds)
+        self.logger.info(
+            "Repository refresh started: placesUrl=%s interactionsUrl=%s",
+            self.settings.places_url,
+            self.settings.interactions_url,
+        )
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            places_payload = await self._request_json(
+                client,
+                self.settings.places_url,
+                params={"limit": "-1"},
+            )
+            interactions_payload = await self._request_json(
+                client,
+                self.settings.interactions_url,
+                params={"limit": "-1", "refModule": "PLACE"},
+            )
+
+        bundle = self.build_bundle_from_payloads(places_payload, interactions_payload)
+        self.logger.info(
+            "Repository refresh finished: places=%s interactions=%s",
+            int(bundle.places.shape[0]),
+            int(bundle.interactions.shape[0]),
+        )
+        return bundle
+
+    def build_bundle_from_payloads(self, places_payload: object, interactions_payload: object) -> DataBundle:
+        places_records = self._extract_records(places_payload)
+        interactions_records = self._extract_records(interactions_payload)
+
+        places_df = self._normalize_places_dataframe(pd.DataFrame(places_records))
+        interactions_df = self._normalize_interactions_dataframe(pd.DataFrame(interactions_records))
+
+        return DataBundle(places=places_df, interactions=interactions_df)
+
+    async def _request_json(self, client: httpx.AsyncClient, url: str, params: dict[str, str] | None = None) -> object:
         headers = {}
         if getattr(self.settings, "refresh_trigger_token", None):
             headers["X-ARTOUR-REFRESH-TRIGGER-TOKEN"] = self.settings.refresh_trigger_token
@@ -23,23 +62,21 @@ class ArtourRepository:
         response = await client.get(url, headers=headers, params=params)
         response.raise_for_status()
         self.logger.info("Backend fetch succeeded: url=%s status=%s", url, response.status_code)
-        return response.json()
+        return cast(object, response.json())
 
-    @staticmethod
-    def _extract_records(payload: Any) -> list[dict[str, Any]]:
+    def _extract_records(self, payload: object) -> list[dict[str, object]]:
         if isinstance(payload, list):
-            return payload
+            return [cast(dict[str, object], item) for item in payload]
         if isinstance(payload, dict):
             for key in ("data", "results", "items", "payload"):
                 value = payload.get(key)
                 if isinstance(value, list):
-                    return value
+                    return [cast(dict[str, object], item) for item in value]
             if payload:
-                return [payload]
+                return [cast(dict[str, object], payload)]
         raise ValueError("Expected JSON list payload or an object containing a list.")
 
-    @staticmethod
-    def _normalize_places_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    def _normalize_places_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         if df.empty:
             return df
@@ -73,8 +110,7 @@ class ArtourRepository:
 
         return df
 
-    @staticmethod
-    def _normalize_interactions_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    def _normalize_interactions_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         if df.empty:
             return df
@@ -86,42 +122,3 @@ class ArtourRepository:
             df["refId"] = df["ref_id"]
 
         return df
-
-    def build_bundle_from_payloads(self, places_payload: Any, interactions_payload: Any) -> DataBundle:
-        places_records = self._extract_records(places_payload)
-        interactions_records = self._extract_records(interactions_payload)
-
-        places_df = self._normalize_places_dataframe(pd.DataFrame(places_records))
-        interactions_df = self._normalize_interactions_dataframe(pd.DataFrame(interactions_records))
-
-        return DataBundle(places=places_df, interactions=interactions_df)
-
-    async def refresh(self) -> DataBundle:
-        timeout = httpx.Timeout(self.settings.request_timeout_seconds)
-        self.logger.info(
-            "Repository refresh started: placesUrl=%s interactionsUrl=%s",
-            self.settings.places_url,
-            self.settings.interactions_url,
-        )
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            places_payload = await self._request_json(
-                client,
-                self.settings.places_url,
-                params={"limit": "-1"},
-            )
-            interactions_payload = await self._request_json(
-                client,
-                self.settings.interactions_url,
-                params={"limit": "-1", "refModule": "PLACE"},
-            )
-
-        bundle = self.build_bundle_from_payloads(places_payload, interactions_payload)
-        self.logger.info(
-            "Repository refresh finished: places=%s interactions=%s",
-            int(bundle.places.shape[0]),
-            int(bundle.interactions.shape[0]),
-        )
-        return bundle
-
-    async def fetch_bundle(self) -> DataBundle:
-        return await self.refresh()

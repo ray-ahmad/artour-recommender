@@ -1,76 +1,28 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.adapter.handlers.dependencies import get_recommendation_service
-from src.entity.recommendation_dto import (
-    AprioriExplanation,
-    CbfExplanation,
-    ItemToItemEnvelope,
-    ItemToItemRecommendationResponse,
-    McrsExplanation,
-    RecommendationExplanation,
-    RecommendationItemResponse,
-    UserToItemEnvelope,
-    UserToItemRecommendationResponse,
-    UserToItemRequest,
+from src.adapter.presenter.recommendation import (
+    ItemToItemEnvelopeOutput,
+    ItemToItemOutput,
+    UserToItemEnvelopeOutput,
+    UserToItemInput,
+    UserToItemOutput,
+    new_recommendation_item_output_from_dict,
 )
 from src.module.recommendation.service import RecommendationService
 
 router = APIRouter(tags=["recommendations"])
 
 
-def _float(source: dict[str, object], key: str) -> float:
-    return float(cast(float, source.get(key, 0.0)))
-
-
-def _int(source: dict[str, object], key: str) -> int:
-    return int(cast(int, source.get(key, 0)))
-
-
-def _build_explanation(raw: dict[str, object]) -> RecommendationExplanation:
-    apriori_raw = raw.get("apriori")
-    cbf_raw = raw.get("cbf")
-    mcrs_raw = cast(dict[str, object], raw.get("mcrs") or {})
-
-    return RecommendationExplanation(
-        apriori=AprioriExplanation(**cast(dict[str, Any], apriori_raw)) if apriori_raw else None,
-        cbf=CbfExplanation(similarity_score=_float(cast(dict[str, object], cbf_raw), "score")) if cbf_raw else None,
-        mcrs=McrsExplanation(
-            price=_float(mcrs_raw, "price"),
-            rating=_float(mcrs_raw, "rating"),
-            min_price=_float(mcrs_raw, "min_price"),
-            max_price=_float(mcrs_raw, "max_price"),
-            cost_score=_float(mcrs_raw, "cost_score"),
-            benefit_score=_float(mcrs_raw, "benefit_score"),
-            weight_cost=_float(mcrs_raw, "weight_cost"),
-            weight_benefit=_float(mcrs_raw, "weight_benefit"),
-            final_score=_float(mcrs_raw, "final_score"),
-        ),
-    )
-
-
-def _build_response_items(items: list[dict[str, object]]) -> list[RecommendationItemResponse]:
-    return [
-        RecommendationItemResponse(
-            place_id=str(item.get("place_id", "")),
-            score=_float(item, "score"),
-            rank=_int(item, "rank"),
-            source=str(item.get("source", "unknown")),
-            explanation=_build_explanation(cast(dict[str, object], item.get("explanation") or {})),
-        )
-        for item in items
-    ]
-
-
-@router.post("/recommend/user-to-item", response_model=UserToItemEnvelope)
+@router.post("/recommend/user-to-item", response_model=UserToItemEnvelopeOutput)
 def recommend_user_to_item(
-    payload: UserToItemRequest,
+    payload: UserToItemInput,
     service: RecommendationService = Depends(get_recommendation_service),
-) -> UserToItemEnvelope:
+) -> UserToItemEnvelopeOutput:
     try:
         recommendations = service.recommend_user_to_item(payload.basket_ids, payload.k)
     except ValueError as exc:
@@ -78,22 +30,22 @@ def recommend_user_to_item(
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    return UserToItemEnvelope(
-        data=UserToItemRecommendationResponse(
+    return UserToItemEnvelopeOutput(
+        data=UserToItemOutput(
             basket_ids=[str(item) for item in payload.basket_ids],
             k=int(payload.k or service.settings.default_recommendation_k),
             generated_at=datetime.now(timezone.utc),
-            recommendations=_build_response_items(recommendations),
+            recommendations=[new_recommendation_item_output_from_dict(item) for item in recommendations],
         )
     )
 
 
-@router.get("/recommend/item-to-item/{item_id}", response_model=ItemToItemEnvelope)
+@router.get("/recommend/item-to-item/{item_id}", response_model=ItemToItemEnvelopeOutput)
 def recommend_item_to_item(
     item_id: str,
     k: int | None = Query(default=None, gt=0),
     service: RecommendationService = Depends(get_recommendation_service),
-) -> ItemToItemEnvelope:
+) -> ItemToItemEnvelopeOutput:
     try:
         recommendations = service.recommend_item_to_item(item_id, k)
     except ValueError as exc:
@@ -101,11 +53,11 @@ def recommend_item_to_item(
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    return ItemToItemEnvelope(
-        data=ItemToItemRecommendationResponse(
+    return ItemToItemEnvelopeOutput(
+        data=ItemToItemOutput(
             anchor_id=str(item_id),
             k=int(k or service.settings.default_recommendation_k),
             generated_at=datetime.now(timezone.utc),
-            recommendations=_build_response_items(recommendations),
+            recommendations=[new_recommendation_item_output_from_dict(item) for item in recommendations],
         )
     )

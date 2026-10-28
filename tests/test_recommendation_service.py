@@ -2,7 +2,7 @@ import pandas as pd
 import asyncio
 
 from src.config.settings import Settings
-from src.entity.model_dto import DataBundle
+from src.entity.recommendation import DataBundle
 from src.module.recommendation.repository import ArtourRepository
 from src.module.recommendation.service import RecommendationService
 

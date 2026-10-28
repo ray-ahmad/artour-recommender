@@ -5,7 +5,7 @@ import pandas as pd
 from fastapi.testclient import TestClient
 
 from src.config.settings import Settings, get_settings
-from src.entity.model_dto import DataBundle
+from src.entity.recommendation import DataBundle
 from src.infrastructure.server.rest import create_app
 from src.module.recommendation.repository import ArtourRepository
 from src.module.recommendation.service import RecommendationService

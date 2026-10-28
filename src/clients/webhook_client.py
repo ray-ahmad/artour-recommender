@@ -4,7 +4,7 @@ import logging
 import httpx
 
 from src.config.settings import Settings, get_settings
-from src.entity.admin_dto import RefreshWebhookPayload
+from src.clients.entity.webhook import RefreshWebhookRequest
 
 
 class RefreshWebhookClient:
@@ -12,7 +12,7 @@ class RefreshWebhookClient:
         self.settings = settings or get_settings()
         self.logger = logging.getLogger("uvicorn.error")
 
-    async def send(self, payload: RefreshWebhookPayload) -> None:
+    async def send(self, payload: RefreshWebhookRequest) -> None:
         webhook_url = self.settings.refresh_webhook_url
         if not webhook_url:
             self.logger.info("Refresh webhook URL is not configured; skipping callback for %s", payload.refresh_id)

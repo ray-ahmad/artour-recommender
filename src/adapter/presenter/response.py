@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
 from fastapi.responses import JSONResponse
 
 
@@ -15,7 +14,7 @@ def build_error_response(message: str, error: str, status_code: int) -> JSONResp
     )
 
 
-def build_success_response(data: Any, message: str = "success", status_code: int = 200) -> JSONResponse:
+def build_success_response(data: object, message: str = "success", status_code: int = 200) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content={

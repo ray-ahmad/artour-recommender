@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Mapping, cast
+from typing import cast
+
+from src.entity.recommendation import MCRSRankParams
 
 logger = logging.getLogger(__name__)
 
@@ -24,25 +26,22 @@ class MCRSService:
     def rank(
         self,
         candidate_ids: list[str],
-        place_lookup: Mapping[str, dict[str, float]],
-        min_price: float,
-        max_price: float,
-        limit: int,
+        params: MCRSRankParams,
     ) -> list[dict[str, object]]:
-        if not candidate_ids or limit <= 0:
+        if not candidate_ids or params.limit <= 0:
             return []
 
         scored_candidates: list[dict[str, object]] = []
         for place_id in candidate_ids:
-            stats = place_lookup.get(str(place_id))
+            stats = params.place_lookup.get(str(place_id))
             if not stats:
                 continue
 
             price = float(stats.get("placePrice", 0.0) or 0.0)
             rating = float(stats.get("placeRating", 0.0) or 0.0)
 
-            if max_price > min_price:
-                normalized_price = (price - min_price) / (max_price - min_price)
+            if params.max_price > params.min_price:
+                normalized_price = (price - params.min_price) / (params.max_price - params.min_price)
             else:
                 normalized_price = 0.0
             cost_score = 1.0 - max(0.0, min(1.0, normalized_price))
@@ -62,8 +61,8 @@ class MCRSService:
                     "score": float(final_score),
                     "price": price,
                     "rating": rating,
-                    "min_price": float(min_price),
-                    "max_price": float(max_price),
+                    "min_price": float(params.min_price),
+                    "max_price": float(params.max_price),
                     "cost_score": float(cost_score),
                     "benefit_score": float(benefit_score),
                     "weight_cost": float(self.weight_cost),
@@ -74,9 +73,9 @@ class MCRSService:
         logger.info(
             "MCRS scoring (pre-sort): candidates=%s limit=%s minPrice=%.2f maxPrice=%.2f weightCost=%.2f weightBenefit=%.2f",
             len(scored_candidates),
-            limit,
-            min_price,
-            max_price,
+            params.limit,
+            params.min_price,
+            params.max_price,
             self.weight_cost,
             self.weight_benefit,
         )
@@ -92,4 +91,4 @@ class MCRSService:
             )
 
         scored_candidates.sort(key=lambda item: float(cast(float, item.get("score", 0.0))), reverse=True)
-        return scored_candidates[:limit]
+        return scored_candidates[:params.limit]
